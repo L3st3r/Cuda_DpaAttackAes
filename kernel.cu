@@ -1,21 +1,19 @@
-// Version 0.0.1: Standardprojekt erstellt + Pseudocode aus dem Proposal
-//	Beispiele wurden von Visual Studio automatisch erstellt
+/* Current Version: 0.0.2
+	Added a 'Needed functions and kernels'-section as a very rough structure
 
+/* Version history: 
+	0.0.1: CUDA Project created + pseudo code as a comment
+	(VS inserted the add example automatically)
+*/
 
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
 
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
-
-__global__ void addKernel(int *c, const int *a, const int *b)
-{
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
-}
-
 /*
+	PSEUDO CODE:
+
 % Loop through all key bytes
 for key = 0 to 15 do
 
@@ -45,6 +43,33 @@ for key = 0 to 15 do
 	end for
 end for
 */
+
+/*
+	NEEDED FUNCTIONS AND KERNELS:
+
+for the computation:					// I just looked in your pseudo code so far
+	(1) adding cc_temp -> kernel
+	(2) for loop around (1) -> ?
+	(3) HW calculation -> function (a kernel would be an overkill here, wouldn't it?)
+
+	everything else should be done on the CPU (maybe even inside of the main()-function)
+
+Input / Output:
+	I1: Input from text files, reading in the power consumption values
+	O1: Output of the results: correlation coefficient per key hypothesis (?)
+
+*/
+
+
+cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
+
+__global__ void addKernel(int *c, const int *a, const int *b)
+{
+    int i = threadIdx.x;
+    c[i] = a[i] + b[i];
+}
+
+
 
 int main()
 {
