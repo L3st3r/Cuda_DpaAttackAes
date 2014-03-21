@@ -75,8 +75,12 @@ __global__ void addKernel(int *c, const int *a, const int *b)
  */
 int NUMBER_OF_TRACES = 10000;
 int POINTS_PER_TRACE = 10000;
+int NUMBER_OF_TEXTS = 10000;
+int BYTES_PER_TEXT = 16;
 
 string TRACE_FILE = "Traces00000.dat";
+string PLAINTEXT_FILE = "plaintexts.dat";
+string CIPHERTEXT_FILE = "ciphertexts.dat";
 
 
 /*
@@ -107,11 +111,62 @@ void read_traces(int **traces) {
   {
 	  for (int j = 0; j < POINTS_PER_TRACE; j++)
 	  {
-		traces[i][j] = static_cast<int>(memblock[i*NUMBER_OF_TRACES + j]);
-		//cout << static_cast<int>(memblock[i]);
+     traces[i][j] = static_cast<int>(memblock[i*NUMBER_OF_TRACES + j]);
+     //cout << static_cast<int>(memblock[i]);
 	  }
   }
   delete[] memblock;
+}
+
+
+/*
+ *	Function to read in plaintexts or ciphertexts
+ */
+void read_texts(int **texts, string filename) {
+  streampos size;
+  char * memblock;
+
+  ifstream file (filename, ios::in|ios::binary|ios::ate);
+  if (file.is_open())
+  {
+    size = file.tellg();
+    memblock = new char [size];
+    file.seekg (0, ios::beg);
+    file.read (memblock, size);
+    file.close();
+
+    cout << "the entire file content is in memory." <<endl;    
+  }
+  else
+  {
+    cout << "Unable to open file" << endl;
+    return;
+  }
+
+  for (int i = 0; i < BYTES_PER_TEXT; i++)
+  {
+    for (int j = 0; j < NUMBER_OF_TEXTS; j++)
+	  {
+     texts[j][i] = static_cast<int>(memblock[i*NUMBER_OF_TEXTS + j]);
+     //cout << static_cast<int>(memblock[i]);
+	  }
+  }
+  delete[] memblock;
+}
+
+
+/*
+ *	Function that computes the hamming weight
+ */
+unsigned char get_Hw(unsigned char b)
+{
+  unsigned int hw = 0;
+  while (b) 
+  {
+    hw += (b & 1);
+    b >>= 1;
+  }
+  return hw;
 }
 
 
@@ -136,6 +191,51 @@ int main()
 	// Stop measuring time
 	std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
 
+
+ 	// Start measuring time
+	const clock_t begin_time_plaintexts = clock();
+	
+	// Initialize plaintext array
+	int **plaintexts;
+	plaintexts = new int *[NUMBER_OF_TEXTS];
+	for (int i = 0; i < NUMBER_OF_TEXTS; i++)
+	{
+		plaintexts[i] = new int[BYTES_PER_TEXT];
+	}
+
+	// Read plaintexts and store in array
+ read_texts(plaintexts, PLAINTEXT_FILE);
+
+	// Stop measuring time
+	std::cout << float( clock () - begin_time_plaintexts ) /  CLOCKS_PER_SEC << "sec" << endl;
+
+
+  	// Start measuring time
+	const clock_t begin_time_ciphertexts = clock();
+	
+	// Initialize plaintext array
+	int **ciphertexts;
+	ciphertexts = new int *[NUMBER_OF_TEXTS];
+	for (int i = 0; i < NUMBER_OF_TEXTS; i++)
+	{
+		ciphertexts[i] = new int[BYTES_PER_TEXT];
+	}
+
+	// Read plaintexts and store in array
+ read_texts(ciphertexts, CIPHERTEXT_FILE);
+
+	// Stop measuring time
+	std::cout << float( clock () - begin_time_ciphertexts ) /  CLOCKS_PER_SEC << "sec" << endl;
+
+
+  /*                                                               JUST FOR TESTING
+ this can be used to test the hamming weight function
+ std::cout << "hw: i - hw(i)" << endl;
+ for (int i = 0; i < 256; i++)
+ {
+   std::cout << i << " - " << (int) get_Hw(i) << endl;
+ }
+ */
 
 
 
