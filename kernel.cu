@@ -271,6 +271,29 @@ int main()
 	std::cout << float( clock () - begin_time_ciphertexts ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 
+ int *hw;
+ hw = new int [NUMBER_OF_TRACES];
+ 
+ // Loop through all key bytes
+ for (int key = 0; key <= 15; key++)
+ {
+   // Loop through all key candidates
+   for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
+   {
+     // Measure hamming weight for every trace
+     for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
+     {
+       // Calculate the hamming weight
+       hw[trace] = get_Hw(get_TTable_Out(plaintexts[trace][key], key_candidate));
+     }
+     
+     //...
+
+   }
+ }
+
+
+
  //                                                             //JUST FOR TESTING
  ////TEST for T-Table:
  //std::cout << "T-Table: plaintext, key_candidate - T-Table(plaintext ^ key_candidate)" << endl;
