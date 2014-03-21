@@ -76,7 +76,8 @@ __global__ void addKernel(int *c, const int *a, const int *b)
 int NUMBER_OF_TRACES = 10000;
 int POINTS_PER_TRACE = 10000;
 int NUMBER_OF_TEXTS = 10000;
-int BYTES_PER_TEXT = 16;
+int BYTES_PER_TEXT = 16;      // fix for AES
+int BYTES_PER_KEY = 16;       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
 
 string TRACE_FILE = "Traces00000.dat";
 string PLAINTEXT_FILE = "plaintexts.dat";
@@ -158,7 +159,7 @@ void read_texts(int **texts, string filename) {
 /*
  *	Function that computes the hamming weight
  */
-unsigned char get_Hw(unsigned char b)
+unsigned int get_Hw(unsigned int b)
 {
   unsigned int hw = 0;
   while (b) 
@@ -275,7 +276,7 @@ int main()
  hw = new int [NUMBER_OF_TRACES];
  
  // Loop through all key bytes
- for (int key = 0; key <= 15; key++)
+ for (int key = 0; key <= BYTES_PER_KEY; key++)
  {
    // Loop through all key candidates
    for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
