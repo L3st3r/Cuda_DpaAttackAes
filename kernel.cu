@@ -1,15 +1,11 @@
-/* Current Version: 0.0.2
-	Added a 'Needed functions and kernels'-section as a very rough structure
-
-/* Version history: 
-	0.0.1: CUDA Project created + pseudo code as a comment
-	(VS inserted the add example automatically)
-*/
-
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 
 #include <stdio.h>
+#include <iostream>
+#include <fstream>
+#include <time.h>
+using namespace std;
 
 /*
 	PSEUDO CODE:
@@ -60,8 +56,10 @@ Input / Output:
 
 */
 
-
+// #################### OLD SAMPLE STUFF #####################
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
+
+
 
 __global__ void addKernel(int *c, const int *a, const int *b)
 {
@@ -70,10 +68,74 @@ __global__ void addKernel(int *c, const int *a, const int *b)
 }
 
 
+// #################### OWN PROGRAM #####################
+
+/*
+ *  Global Configuration
+ */
+int NUMBER_OF_TRACES = 10000;
+int POINTS_PER_TRACE = 10000;
+
+string TRACE_FILE = "Traces00000.dat";
+
+
+/*
+ *	Function to read in values of traces
+ */
+void read_traces(int **traces) {
+  streampos size;
+  char * memblock;
+
+  ifstream file (TRACE_FILE, ios::in|ios::binary|ios::ate);
+  if (file.is_open())
+  {
+    size = file.tellg();
+    memblock = new char [size];
+    file.seekg (0, ios::beg);
+    file.read (memblock, size);
+    file.close();
+
+    cout << "the entire file content is in memory." <<endl;    
+  }
+  else cout << "Unable to open file" << endl;
+
+  for (int i = 0; i < NUMBER_OF_TRACES; i++)
+  {
+	  for (int j = 0; j < POINTS_PER_TRACE; j++)
+	  {
+		traces[i][j] = static_cast<int>(memblock[i*NUMBER_OF_TRACES + j]);
+		//cout << static_cast<int>(memblock[i]);
+	  }
+  }
+  delete[] memblock;
+}
+
 
 int main()
 {
+	// #################### OWN PROGRAM #####################
+	
+	// Start measuring time
+	const clock_t begin_time = clock();
+	
+	// Initialize trace array
+	int **traces;
+	traces = new int *[NUMBER_OF_TRACES];
+	for (int i = 0; i < NUMBER_OF_TRACES; i++)
+	{
+		traces[i] = new int[POINTS_PER_TRACE];
+	}
 
+	// Read traces and store in array
+	read_traces(traces);
+
+	// Stop measuring time
+	std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
+
+
+
+
+	// #################### OLD SAMPLE STUFF #####################
 
     const int arraySize = 5;
     const int a[arraySize] = { 1, 2, 3, 4, 5 };
@@ -100,6 +162,9 @@ int main()
 
     return 0;
 }
+
+
+// #################### OLD SAMPLE STUFF #####################
 
 // Helper function for using CUDA to add vectors in parallel.
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
