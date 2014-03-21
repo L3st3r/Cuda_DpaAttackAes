@@ -97,7 +97,11 @@ void read_traces(int **traces) {
 
     cout << "the entire file content is in memory." <<endl;    
   }
-  else cout << "Unable to open file" << endl;
+  else
+  {
+    cout << "Unable to open file" << endl;
+    return;
+  }
 
   for (int i = 0; i < NUMBER_OF_TRACES; i++)
   {
