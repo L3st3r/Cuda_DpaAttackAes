@@ -79,6 +79,9 @@ int NUMBER_OF_TEXTS = 10000;
 int BYTES_PER_TEXT = 16;      // fix for AES
 int BYTES_PER_KEY = 16;       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
 
+int TRACE_STARTPOINT = 0;
+int TRACE_ENDPOINT = 1000;
+
 string TRACE_FILE = "Traces00000.dat";
 string PLAINTEXT_FILE = "plaintexts.dat";
 string CIPHERTEXT_FILE = "ciphertexts.dat";
@@ -123,7 +126,7 @@ void read_traces(int **traces) {
 /*
  *	Function to read in plaintexts or ciphertexts
  */
-void read_texts(int **texts, string filename) {
+void read_texts(unsigned _int8 **texts, string filename) {
   streampos size;
   char * memblock;
 
@@ -144,12 +147,11 @@ void read_texts(int **texts, string filename) {
     return;
   }
 
-  for (int i = 0; i < BYTES_PER_TEXT; i++)
+  for (int j = 0; j < BYTES_PER_TEXT; j++)
   {
-    for (int j = 0; j < NUMBER_OF_TEXTS; j++)
+    for (int i = 0; i < NUMBER_OF_TEXTS; i++)
 	  {
-     texts[j][i] = static_cast<int>(memblock[i*NUMBER_OF_TEXTS + j]);
-     //cout << static_cast<int>(memblock[i]);
+		texts[i][j] = memblock[j*BYTES_PER_TEXT + i];
 	  }
   }
   delete[] memblock;
@@ -214,6 +216,44 @@ unsigned int get_TTable_Out(int plaintext_byte, int key_candidate)
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
+/*
+ * Function to calculate the Pearson Correlation Coefficient
+ */
+double get_Corr_Coef(int *x, int *y, int n)
+{
+	_Uint32t sum_x  = 0;
+	_Uint32t sum_y  = 0;
+
+	for(int i = 0; i < n; i++)
+	{
+		sum_x  += x[i];
+		sum_y  += y[i];
+	}
+
+	long double x_average = sum_x/n;
+	long double y_average = sum_y/n;
+
+	long double dividend = 0;
+	long double divisor1 = 0;
+	long double divisor2 = 0;
+
+	for(int i = 0; i < n; i++)
+	{
+		dividend += (x[i] - x_average)*(y[i] - y_average); 
+		divisor1 += (x[i] - x_average)*(x[i] - x_average); 
+		divisor2 += (y[i] - y_average)*(y[i] - y_average); 
+	}
+
+	long double divisor = sqrt(divisor1)*sqrt(divisor2);
+
+	if ((dividend == 0) || (divisor == 0))
+	{
+		return 0.0;
+	}else{
+		return dividend/divisor;
+	}		
+}
+
 int main()
 {
 	// #################### OWN PROGRAM #####################
@@ -240,60 +280,135 @@ int main()
 	const clock_t begin_time_plaintexts = clock();
 	
 	// Initialize plaintext array
-	int **plaintexts;
-	plaintexts = new int *[NUMBER_OF_TEXTS];
+	unsigned _int8 **plaintexts;
+	plaintexts = new unsigned _int8 *[NUMBER_OF_TEXTS];
 	for (int i = 0; i < NUMBER_OF_TEXTS; i++)
 	{
-		plaintexts[i] = new int[BYTES_PER_TEXT];
+		plaintexts[i] = new unsigned _int8[BYTES_PER_TEXT];
 	}
 
 	// Read plaintexts and store in array
- read_texts(plaintexts, PLAINTEXT_FILE);
+	read_texts(plaintexts, PLAINTEXT_FILE);
 
 	// Stop measuring time
 	std::cout << float( clock () - begin_time_plaintexts ) /  CLOCKS_PER_SEC << "sec" << endl;
 
-
-  	// Start measuring time
-	const clock_t begin_time_ciphertexts = clock();
 	
-	// Initialize plaintext array
-	int **ciphertexts;
-	ciphertexts = new int *[NUMBER_OF_TEXTS];
-	for (int i = 0; i < NUMBER_OF_TEXTS; i++)
-	{
-		ciphertexts[i] = new int[BYTES_PER_TEXT];
-	}
-
-	// Read plaintexts and store in array
- read_texts(ciphertexts, CIPHERTEXT_FILE);
-
-	// Stop measuring time
-	std::cout << float( clock () - begin_time_ciphertexts ) /  CLOCKS_PER_SEC << "sec" << endl;
-
+ 	// Start measuring time
+	const clock_t begin_time_calculation = clock();
 
  int *hw;
  hw = new int [NUMBER_OF_TRACES];
  
  // Loop through all key bytes
- for (int key = 0; key <= BYTES_PER_KEY; key++)
+ for (int key_byte = 0; key_byte < 1; key_byte++)//for (int key_byte = 0; key_byte < BYTES_PER_KEY; key_byte++)
  {
-   // Loop through all key candidates
-   for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
-   {
-     // Measure hamming weight for every trace
-     for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
-     {
-       // Calculate the hamming weight
-       hw[trace] = get_Hw(get_TTable_Out(plaintexts[trace][key], key_candidate));
-     }
-     
-     //...
+	  /*
+	  // Initialize corr array (event. doch nicht nötig)
+	  double **corr;
+	  corr = new double *[256];
+	  for (int i = 0; i < 256; i++)
+	  {
+		  corr[i] = new double[TRACE_ENDPOINT - TRACE_STARTPOINT];
+	  }	
+	  */
 
-   }
+	  double highest_cc = 0.0;
+	  int key = -1;
+	 
+	  // Loop through all key candidates
+     for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
+     {
+	     cout << "Key Candidate = " << key_candidate << endl;
+	   
+	     // Measure hamming weight for every trace
+         for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
+         {
+           // Calculate the hamming weight
+	       // PM: eventuell parallelisieren??
+           hw[trace] = get_Hw(get_TTable_Out(plaintexts[trace][key_byte], key_candidate));
+	         }
+	 
+         // Calculate Correlation Coefficient 
+	     for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
+	     {
+		    // Create "Slice" of Traces at certain point
+		    int *traces_at_trace_point;
+		    traces_at_trace_point = new int [NUMBER_OF_TRACES];
+			
+		    for (int t = 0; t < NUMBER_OF_TRACES; t++)
+		    {
+			    traces_at_trace_point[t] = traces[t][trace_point];
+		    }
+		    // Correlation Coefficient 
+		    double cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+
+      delete[] traces_at_trace_point;
+
+		    // Find the highest Correlation Coefficient 
+		    if(cc > highest_cc)
+		    {
+			    highest_cc = cc;
+			    key = key_candidate;
+
+			    cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key << endl;
+
+		    }
+
+		    //corr[key_candidate][trace_point - TRACE_STARTPOINT] = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+
+		    // Leider bricht der Alg. bei mir immer nach 43 Kandidaten ab... :-/
+
+	     }
+     }
  }
 
 
+ // deleting everything
+ 	for (int i = 0; i < NUMBER_OF_TRACES; i++)
+	{
+		delete[] traces[i];
+	}
+ for (int i = 0; i < NUMBER_OF_TEXTS; i++)
+	{
+		delete[] plaintexts[i];
+	}
+ delete[] traces;
+ delete[] plaintexts;
+ delete[] hw;
+
+ // TESTING CORR. COEF.
+ /*		int *x;
+		x = new int [10];
+		int *y;
+		y = new int [10];
+		
+
+		x[0] = 11111111;
+		x[1] = 1;
+		x[2] = 1;
+		x[3] = 1;
+		x[4] = 1;
+		x[5] = 1;
+		x[6] = 1;
+		x[7] = 1;
+		x[8] = 1;
+		x[9] = 1;
+
+		y[0] = 2;
+		y[1] = 2;
+		y[2] = 2;
+		y[3] = 2;
+		y[4] = 200;
+		y[5] = 1;
+		y[6] = 1;
+		y[7] = 1;
+		y[8] = 1;
+		y[9] = 100;
+
+		double cc = get_Corr_Coef(x, y, 10);
+		std::cout << " CC = " << cc << endl;
+*/
 
  //                                                             //JUST FOR TESTING
  ////TEST for T-Table:
@@ -311,7 +426,8 @@ int main()
  //  std::cout << i << " - " << (int) get_Hw(i) << endl;
  //}
 
-
+	// Stop measuring time
+	std::cout << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 
 	// #################### OLD SAMPLE STUFF #####################
