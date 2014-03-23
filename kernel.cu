@@ -115,7 +115,7 @@ void read_traces(int **traces) {
   {
 	  for (int j = 0; j < POINTS_PER_TRACE; j++)
 	  {
-     traces[i][j] = static_cast<int>(memblock[i*NUMBER_OF_TRACES + j]);
+     traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
      //cout << static_cast<int>(memblock[i]);
 	  }
   }
@@ -151,7 +151,7 @@ void read_texts(unsigned _int8 **texts, string filename) {
   {
     for (int i = 0; i < NUMBER_OF_TEXTS; i++)
 	  {
-		texts[i][j] = memblock[j*BYTES_PER_TEXT + i];
+		texts[i][j] = memblock[j*NUMBER_OF_TEXTS + i];
 	  }
   }
   delete[] memblock;
@@ -176,7 +176,7 @@ unsigned int get_Hw(unsigned int b)
 /*
  *	Function that computes the T-Table output for a plaintext-byte and a key candidate
  */
-unsigned int get_TTable_Out(int plaintext_byte, int key_candidate)
+unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candidate)
 {
   // AES T-Table LUT
   unsigned int ttable0 [] = 
@@ -314,12 +314,18 @@ int main()
 	  */
 
 	  double highest_cc = 0.0;
+   
+   double cc = -1;
 	  int key = -1;
+   double highest_actual_cc = -1.0;
+   double cc_sum = 0.0;
+   double cc_avg = 0.0;
 	 
 	  // Loop through all key candidates
      for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
      {
-	     cout << "Key Candidate = " << key_candidate << endl;
+       
+	     //cout << "Key Candidate = " << key_candidate << endl;
 	   
 	     // Measure hamming weight for every trace
          for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
@@ -332,21 +338,20 @@ int main()
          // Calculate Correlation Coefficient 
 	     for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
 	     {
-		    // Create "Slice" of Traces at certain point
-		    int *traces_at_trace_point;
-		    traces_at_trace_point = new int [NUMBER_OF_TRACES];
+		      // Create "Slice" of Traces at certain point
+		      int *traces_at_trace_point;
+		      traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
-		    for (int t = 0; t < NUMBER_OF_TRACES; t++)
-		    {
-			    traces_at_trace_point[t] = traces[t][trace_point];
-		    }
-		    // Correlation Coefficient 
-		    double cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+		      for (int t = 0; t < NUMBER_OF_TRACES; t++)
+		      {
+			       traces_at_trace_point[t] = traces[t][trace_point];
+		      }
+		      // Correlation Coefficient 
+		      cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
 
-      delete[] traces_at_trace_point;
+        delete[] traces_at_trace_point;
 
-		    // Find the highest Correlation Coefficient 
-		    if(cc > highest_cc)
+        if(cc > highest_cc)
 		    {
 			    highest_cc = cc;
 			    key = key_candidate;
@@ -354,12 +359,31 @@ int main()
 			    cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key << endl;
 
 		    }
+      if (cc > highest_actual_cc)
+      {
+        highest_actual_cc = cc;
+			    //key = key_candidate;
 
-		    //corr[key_candidate][trace_point - TRACE_STARTPOINT] = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+        
 
-		    // Leider bricht der Alg. bei mir immer nach 43 Kandidaten ab... :-/
+      }
+        cc_sum += cc;
+
+
+		      //corr[key_candidate][trace_point - TRACE_STARTPOINT] = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+
+		      // Leider bricht der Alg. bei mir immer nach 43 Kandidaten ab... :-/
 
 	     }
+     // cout << "actual CC = " << highest_actual_cc << ", actual Key Candidate = " << key_candidate << endl;
+    
+        cc_avg = cc_sum / NUMBER_OF_TRACES;
+        cout << "key candidate= " << key_candidate << " average = " << cc_avg << " max cc = " << highest_actual_cc <<  endl;
+        cc_avg = 0.0;
+        cc_sum = 0.0;
+          highest_actual_cc = -1;
+      		    // Find the highest Correlation Coefficient 
+		    
      }
  }
 
