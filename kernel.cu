@@ -538,6 +538,12 @@ int main()
 	delete[] hw;
 	delete[] key;
 
+ for (int i = 0; i < 256; i++)
+ {
+    delete[] corr[i];
+ }
+  delete[] corr;
+
  // cudaDeviceReset must be called before exiting in order for profiling and
 	// tracing tools such as Nsight and Visual Profiler to show complete traces.
 	/*cudaStatus = cudaDeviceReset();
