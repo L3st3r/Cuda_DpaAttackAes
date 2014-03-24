@@ -307,6 +307,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
   int *dev_hw = 0;
   double *dev_cc = 0;
   cudaError_t cudaStatus;
+  size_t pitch;
     
 
     // Choose which GPU to run on, change this on a multi-GPU system.
@@ -329,20 +330,13 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
         goto Error;
     }
 
-    cudaStatus = cudaMalloc((void**)&dev_traces, POINTS_PER_TRACE * sizeof(int*));
+    cudaStatus = cudaMallocPitch(&dev_traces, &pitch,
+                POINTS_PER_TRACE * sizeof(int), NUMBER_OF_TRACES);
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
+        fprintf(stderr, "cudaMallocPitch failed!");
         goto Error;
     }
 
-   for (int p = 0; p < POINTS_PER_TRACE; p++)
-	  {
-     cudaStatus = cudaMalloc((void**)&(dev_traces[p]), n * sizeof(int));
-     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-	  }
 
     // Copy input vectors from host memory to GPU buffers.
     cudaStatus = cudaMemcpy(dev_hw, hw, n * sizeof(int), cudaMemcpyHostToDevice);
@@ -351,23 +345,15 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy(dev_traces, traces, n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy2D(dev_traces, pitch, traces, POINTS_PER_TRACE * sizeof(int), POINTS_PER_TRACE * sizeof(int), n, cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
+        fprintf(stderr, "cudaMemcpy2D failed!");
         goto Error;
     }
 
-    for (int p = 0; p < POINTS_PER_TRACE; p++)
-	   {
-      cudaStatus = cudaMemcpy(dev_traces[p], traces[p], n * sizeof(int), cudaMemcpyHostToDevice);
-      if (cudaStatus != cudaSuccess) {
-          fprintf(stderr, "cudaMemcpy failed!");
-          goto Error;
-      }
-    }
 
     // Launch a kernel on the GPU with one thread for each element.
-    CorrCoefKernel<<<1, NUMBER_OF_TRACES>>>(dev_cc, dev_traces, dev_hw, n);
+    CorrCoefKernel<<<1, n>>>(dev_cc, dev_traces, dev_hw, n);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
