@@ -222,7 +222,7 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
-__global__ void CorrCoefKernel(int *result, int **x, int *y, int n)
+__global__ void CorrCoefKernel(double *result, int **x, int *y, int n)
 {
     int i = threadIdx.x;
     
@@ -305,7 +305,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
 {
   int **dev_traces = 0;
   int *dev_hw = 0;
-  int *dev_cc = 0;
+  double *dev_cc = 0;
   cudaError_t cudaStatus;
     
 
@@ -317,7 +317,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
     }
 
     // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_cc, n * sizeof(int));
+    cudaStatus = cudaMalloc((void**)&dev_cc, n * sizeof(double));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -329,7 +329,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
         goto Error;
     }
 
-    cudaStatus = cudaMalloc((void**)&dev_traces, n * sizeof(int*));
+    cudaStatus = cudaMalloc((void**)&dev_traces, POINTS_PER_TRACE * sizeof(int*));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -337,7 +337,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
 
    for (int p = 0; p < POINTS_PER_TRACE; p++)
 	  {
-     cudaStatus = cudaMalloc((void**)&dev_traces[p], n * sizeof(int));
+     cudaStatus = cudaMalloc((void**)&(dev_traces[p]), n * sizeof(int));
      if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -346,6 +346,12 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
 
     // Copy input vectors from host memory to GPU buffers.
     cudaStatus = cudaMemcpy(dev_hw, hw, n * sizeof(int), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMemcpy(dev_traces, traces, n * sizeof(int), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
@@ -381,7 +387,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
     }
 
     // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(cc, dev_cc, n * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaStatus = cudaMemcpy(cc, dev_cc, n * sizeof(double), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
