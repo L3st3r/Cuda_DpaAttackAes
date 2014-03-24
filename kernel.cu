@@ -5,6 +5,7 @@
 #include <iostream>
 #include <fstream>
 #include <time.h>
+#include <string>
 using namespace std;
 
 /*
@@ -54,6 +55,10 @@ Input / Output:
 	I1: Input from text files, reading in the power consumption values
 	O1: Output of the results: correlation coefficient per key hypothesis (?)
 
+
+
+	CORRECT CIPHER KEY: 2b  7e  15  16  28  ae  d2  a6  ab  f7  15  88  09  cf  4f  3c
+                   dec: 043 126 021 022 040 174 210 166 171 247 021 136 009 207 079 060		 
 */
 
 // #################### OLD SAMPLE STUFF #####################
@@ -79,8 +84,8 @@ int NUMBER_OF_TEXTS = 10000;
 int BYTES_PER_TEXT = 16;      // fix for AES
 int BYTES_PER_KEY = 16;       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
 
-int TRACE_STARTPOINT = 0;
-int TRACE_ENDPOINT = 1000;
+int TRACE_STARTPOINT = 550;
+int TRACE_ENDPOINT = 600;
 
 string TRACE_FILE = "Traces00000.dat";
 string PLAINTEXT_FILE = "plaintexts.dat";
@@ -90,11 +95,11 @@ string CIPHERTEXT_FILE = "ciphertexts.dat";
 /*
  *	Function to read in values of traces
  */
-void read_traces(int **traces) {
+void read_traces(int **traces, string filename) {
   streampos size;
   char * memblock;
 
-  ifstream file (TRACE_FILE, ios::in|ios::binary|ios::ate);
+  ifstream file (filename, ios::in|ios::binary|ios::ate);
   if (file.is_open())
   {
     size = file.tellg();
@@ -103,11 +108,11 @@ void read_traces(int **traces) {
     file.read (memblock, size);
     file.close();
 
-    cout << "the entire file content is in memory." <<endl;    
+    cout << "Content of file " << filename << " is in memory." << endl;   
   }
   else
   {
-    cout << "Unable to open file" << endl;
+    cout << "Unable to open file" << filename << endl;
     return;
   }
 
@@ -140,11 +145,11 @@ void read_texts(unsigned _int8 **texts, string filename) {
     file.read (memblock, size);
     file.close();
 
-    cout << "the entire file content is in memory." <<endl;    
+    cout << "Content of file " << filename << " is in memory." << endl;    
   }
   else
   {
-    cout << "Unable to open file" << endl;
+    cout << "Unable to open file " << filename << endl;
     return;
   }
 
@@ -217,42 +222,43 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
-//__global__ void get_Corr_Coef_parallel(int *result, int **x, int *y, int *n)
-//{
-//    int i = threadIdx.x;
-//    
-//    _Uint32t sum_x  = 0;
-//	   _Uint32t sum_y  = 0;
-//
-//	    for(int j = 0; j < n; j++)
-//	    {
-//       sum_x  += x[i][j];
-//       sum_y  += y[j];
-//	    }
-//
-//     long double x_average = sum_x/n;
-//	    long double y_average = sum_y/n;
-//
-//	    long double dividend = 0;
-//	    long double divisor1 = 0;
-//	    long double divisor2 = 0;
-//
-//     for(int j = 0; j < n; j++)
-//	    {
-//		    dividend += (x[i][j] - x_average)*(y[i] - y_average); 
-//		    divisor1 += (x[i][j] - x_average)*(x[i][j] - x_average); 
-//		    divisor2 += (y[i] - y_average)*(y[i] - y_average); 
-//	    }
-//
-//	    long double divisor = sqrt(divisor1)*sqrt(divisor2);
-//
-//	    if ((dividend == 0) || (divisor == 0))
-//	    {
-//		    result[i] = 0.0;
-//	    }else{
-//		    result[i] = dividend/divisor;
-//	    }		
-//}
+__global__ void CorrCoefKernel(int *result, int **x, int *y, int n)
+{
+    int i = threadIdx.x;
+    
+    _Uint32t sum_x  = 0;
+	   _Uint32t sum_y  = 0;
+
+	    for(int j = 0; j < n; j++)
+	    {
+       sum_x  += x[i][j];
+       sum_y  += y[j];
+	    }
+
+     double x_average = sum_x/n;
+	    double y_average = sum_y/n;
+
+	    double dividend = 0;
+	    double divisor1 = 0;       // there is no cuda function sqrt(long double), just sqrt(double)
+	    double divisor2 = 0;
+
+     for(int j = 0; j < n; j++)
+	    {
+		    dividend += (x[i][j] - x_average)*(y[j] - y_average); 
+		    divisor1 += (x[i][j] - x_average)*(x[i][j] - x_average);  
+		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
+	    }
+
+	    double divisor = sqrt(divisor1)*sqrt(divisor2);
+
+	    if ((dividend == 0) || (divisor == 0))
+	    {
+		    result[i] = 0.0;
+	    }else{
+		    result[i] = dividend/divisor;
+	    }		
+}
+
 
 /*
  * Function to calculate the Pearson Correlation Coefficient
@@ -292,34 +298,133 @@ double get_Corr_Coef(int *x, int *y, int n)
 	}		
 }
 
+
+// Helper function for computation of the correlation coefficient using CUDA.
+//cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
+cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
+{
+  int **dev_traces = 0;
+  int *dev_hw = 0;
+  int *dev_cc = 0;
+  cudaError_t cudaStatus;
+    
+
+    // Choose which GPU to run on, change this on a multi-GPU system.
+    cudaStatus = cudaSetDevice(0);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+        goto Error;
+    }
+
+    // Allocate GPU buffers for three vectors (two input, one output)    .
+    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_TRACES * sizeof(int));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMalloc((void**)&dev_hw, NUMBER_OF_TRACES * sizeof(int));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMalloc((void**)&dev_traces, POINTS_PER_TRACE * sizeof(int*));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+   for (int p = 0; p < POINTS_PER_TRACE; p++)
+	  {
+     cudaStatus = cudaMalloc((void**)&dev_traces[p], NUMBER_OF_TRACES * sizeof(int));
+     if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+	  }
+
+    // Copy input vectors from host memory to GPU buffers.
+    cudaStatus = cudaMemcpy(dev_hw, hw, NUMBER_OF_TRACES * sizeof(int), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    for (int p = 0; p < POINTS_PER_TRACE; p++)
+	   {
+      cudaStatus = cudaMemcpy(dev_traces[p], traces[p], NUMBER_OF_TRACES * sizeof(int), cudaMemcpyHostToDevice);
+      if (cudaStatus != cudaSuccess) {
+          fprintf(stderr, "cudaMemcpy failed!");
+          goto Error;
+      }
+    }
+
+    // Launch a kernel on the GPU with one thread for each element.
+    CorrCoefKernel<<<1, NUMBER_OF_TRACES>>>(dev_cc, dev_traces, dev_hw, 10);
+
+    //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
+
+    // Check for any errors launching the kernel
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "CorrCoefKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
+    }
+    
+    // cudaDeviceSynchronize waits for the kernel to finish, and returns
+    // any errors encountered during the launch.
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching CorrCoefKernel!\n", cudaStatus);
+        goto Error;
+    }
+
+    // Copy output vector from GPU buffer to host memory.
+    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_TRACES * sizeof(int), cudaMemcpyDeviceToHost);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+Error:
+    cudaFree(dev_cc);
+    cudaFree(dev_hw);
+
+    for (int p = 0; p < POINTS_PER_TRACE; p++)
+	   {
+       cudaFree(dev_traces[p]);
+	   }
+    cudaFree(dev_traces);
+    
+    
+    return cudaStatus;
+}
+
+
 int main()
 {
-	// #################### OWN PROGRAM #####################
+// #################### OWN PROGRAM #####################
 	
 	// Start measuring time
 	const clock_t begin_time = clock();
 	
 	// Initialize trace array
 	int **traces;
-	/*traces = new int *[NUMBER_OF_TRACES];
-	for (int i = 0; i < NUMBER_OF_TRACES; i++)
-	{
-		traces[i] = new int[POINTS_PER_TRACE];
-	}*/
- traces = new int *[POINTS_PER_TRACE];
+	traces = new int *[POINTS_PER_TRACE];
  for (int i = 0; i < POINTS_PER_TRACE; i++)
 	{
 		traces[i] = new int[NUMBER_OF_TRACES];
 	}
 
 	// Read traces and store in array
-	read_traces(traces);
+	read_traces(traces, TRACE_FILE);
 
 	// Stop measuring time
 	std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 
- 	// Start measuring time
+	// Start measuring time
 	const clock_t begin_time_plaintexts = clock();
 	
 	// Initialize plaintext array
@@ -337,195 +442,132 @@ int main()
 	std::cout << float( clock () - begin_time_plaintexts ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 	
- 	// Start measuring time
+	// Start measuring time
 	const clock_t begin_time_calculation = clock();
 
- int *hw;
- hw = new int [NUMBER_OF_TRACES];
+	int *hw;
+	hw = new int [NUMBER_OF_TRACES];
  
- // Loop through all key bytes
- for (int key_byte = 0; key_byte < 1; key_byte++)//for (int key_byte = 0; key_byte < BYTES_PER_KEY; key_byte++)
- {
-	  /*
-	  // Initialize corr array (event. doch nicht nötig)
-	  double **corr;
-	  corr = new double *[256];
-	  for (int i = 0; i < 256; i++)
-	  {
-		  corr[i] = new double[TRACE_ENDPOINT - TRACE_STARTPOINT];
-	  }	
-	  */
+	int *key;
+	key = new int [BYTES_PER_KEY];
 
-	  double highest_cc = 0.0;
-   
-   double cc = -1;
-	  int key = -1;
-   /*double highest_actual_cc = -1.0;
-   double cc_sum = 0.0;
-   double cc_avg = 0.0;*/
-	 
-	  // Loop through all key candidates
-     for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
-     {
-       
-	     //cout << "Key Candidate = " << key_candidate << endl;
-	   
-	     // Measure hamming weight for every trace
-         for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
-         {
-           // Calculate the hamming weight
-	       // PM: eventuell parallelisieren??
-           hw[trace] = get_Hw(get_TTable_Out(plaintexts[trace][key_byte], key_candidate));
-	         }
-	 
-         // Calculate Correlation Coefficient 
+	// Loop through all key bytes
+	for (int key_byte = 0; key_byte < BYTES_PER_KEY; key_byte++)
+	{
+		cout << "Compute key byte " << key_byte << " ..." << endl;
 
-	     for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
-	     {
-		      // Create "Slice" of Traces at certain point
-		      /*int *traces_at_trace_point;
-		      traces_at_trace_point = new int [NUMBER_OF_TRACES];
+		double highest_cc = -1.0;
+		double cc = -1.0;
+ 
+		// Loop through all key candidates
+		for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
+		{   
+			// Measure hamming weight for every trace
+			for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
+			{
+				// Calculate the hamming weight
+				// PM: eventuell parallelisieren??
+				hw[trace] = get_Hw(get_TTable_Out(plaintexts[trace][key_byte], key_candidate));
+			}
+	 
+			// Calculate Correlation Coefficient 
+
+   /*cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
+        if (cudaStatus != cudaSuccess) {
+            fprintf(stderr, "computeCoeffWithCuda failed!");
+            return 1;
+   }*/
+
+			for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
+			{
+				// Create "Slice" of Traces at certain point
+				/*int *traces_at_trace_point;
+				traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
-		      for (int t = 0; t < NUMBER_OF_TRACES; t++)
-		      {
-			       traces_at_trace_point[t] = traces[t][trace_point];
-		      }*/
-		      // Correlation Coefficient 
-		      //cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
-        cc = get_Corr_Coef(traces[trace_point], hw, NUMBER_OF_TRACES);
+				for (int t = 0; t < NUMBER_OF_TRACES; t++)
+				{
+					traces_at_trace_point[t] = traces[t][trace_point];
+				}*/
 
-        //delete[] traces_at_trace_point;
+				// Correlation Coefficient 
+				cc = get_Corr_Coef(traces[trace_point], hw, NUMBER_OF_TRACES);
 
-        if(cc > highest_cc)
-		    {
-			    highest_cc = cc;
-			    key = key_candidate;
+				/*delete[] traces_at_trace_point;*/
 
-			    cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key << endl;
+				if(cc > highest_cc)
+				{
+					highest_cc = cc;
+					key[key_byte] = key_candidate;
+					//highest_trace_point = trace_point;
+					//cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key_candidate << ", Trace Point = " << highest_trace_point << endl;
+				}
+			}
+		}
+		highest_cc = -1.0;
+	} 
 
-		    }
-      //if (cc > highest_actual_cc)
-      //{
-      //  highest_actual_cc = cc;
-			   // //key = key_candidate;
-
-      //  
-
-      //}
-       // cc_sum += cc;
-
-
-		      //corr[key_candidate][trace_point - TRACE_STARTPOINT] = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
-
-		      // Leider bricht der Alg. bei mir immer nach 43 Kandidaten ab... :-/
-
-	     }
-     // cout << "actual CC = " << highest_actual_cc << ", actual Key Candidate = " << key_candidate << endl;
-    
-        //cc_avg = cc_sum / NUMBER_OF_TRACES;
-        ////cout << "key candidate= " << key_candidate << " average = " << cc_avg << " max cc = " << highest_actual_cc <<  endl;
-        //cc_avg = 0.0;
-        //cc_sum = 0.0;
-        //  highest_actual_cc = -1;
-      		    // Find the highest Correlation Coefficient 
-		    
-     }
-     cout << "key byte " << key_byte << " complete" << endl;
- }
+	cout << "CIPHER KEY =";
+	for(int i = 0; i < BYTES_PER_KEY; i++)
+	{
+		cout << hex << " " << key[i];
+	}
+	cout << endl;
 
 
- // deleting everything
- 	for (int i = 0; i < NUMBER_OF_TRACES; i++)
+	// deleting everything
+	for (int i = 0; i < NUMBER_OF_TRACES; i++)
 	{
 		delete[] traces[i];
 	}
- for (int i = 0; i < NUMBER_OF_TEXTS; i++)
+	for (int i = 0; i < NUMBER_OF_TEXTS; i++)
 	{
 		delete[] plaintexts[i];
 	}
- delete[] traces;
- delete[] plaintexts;
- delete[] hw;
+	delete[] traces;
+	delete[] plaintexts;
+	delete[] hw;
+	delete[] key;
 
- // TESTING CORR. COEF.
- /*		int *x;
-		x = new int [10];
-		int *y;
-		y = new int [10];
-		
+ // cudaDeviceReset must be called before exiting in order for profiling and
+	// tracing tools such as Nsight and Visual Profiler to show complete traces.
+	/*cudaStatus = cudaDeviceReset();
+	if (cudaStatus != cudaSuccess) {
+	fprintf(stderr, "cudaDeviceReset failed!");
+	return 1;*/
 
-		x[0] = 11111111;
-		x[1] = 1;
-		x[2] = 1;
-		x[3] = 1;
-		x[4] = 1;
-		x[5] = 1;
-		x[6] = 1;
-		x[7] = 1;
-		x[8] = 1;
-		x[9] = 1;
-
-		y[0] = 2;
-		y[1] = 2;
-		y[2] = 2;
-		y[3] = 2;
-		y[4] = 200;
-		y[5] = 1;
-		y[6] = 1;
-		y[7] = 1;
-		y[8] = 1;
-		y[9] = 100;
-
-		double cc = get_Corr_Coef(x, y, 10);
-		std::cout << " CC = " << cc << endl;
-*/
-
- //                                                             //JUST FOR TESTING
- ////TEST for T-Table:
- //std::cout << "T-Table: plaintext, key_candidate - T-Table(plaintext ^ key_candidate)" << endl;
- //std::cout << std::hex << get_TTable_Out(15, 240) << endl;
- //std::cout << std::hex << get_TTable_Out(127, 255) << endl;
-
-
-
- //                                                            //JUST FOR TESTING
- ////this can be used to test the hamming weight function
- //std::cout << "hw: i - hw(i)" << endl;
- //for (int i = 0; i < 256; i++)
- //{
- //  std::cout << i << " - " << (int) get_Hw(i) << endl;
- //}
+	// 	CORRECT CIPHER KEY: 2b  7e  15  16  28  ae  d2  a6  ab  f7  15  88  09  cf  4f  3c
+	//                 dec: 043 126 021 022 040 174 210 166 171 247 021 136 009 207 079 060		 
 
 	// Stop measuring time
 	std::cout << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 
-	// #################### OLD SAMPLE STUFF #####################
+// #################### OLD SAMPLE STUFF #####################
 
-    const int arraySize = 5;
-    const int a[arraySize] = { 1, 2, 3, 4, 5 };
-    const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    int c[arraySize] = { 0 };
+	const int arraySize = 5;
+	const int a[arraySize] = { 1, 2, 3, 4, 5 };
+	const int b[arraySize] = { 10, 20, 30, 40, 50 };
+	int c[arraySize] = { 0 };
 
-    // Add vectors in parallel.
-    cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addWithCuda failed!");
-        return 1;
-    }
+	// Add vectors in parallel.
+	cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
+	if (cudaStatus != cudaSuccess) {
+	fprintf(stderr, "addWithCuda failed!");
+	return 1;
+	}
 
-    printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-        c[0], c[1], c[2], c[3], c[4]);
+	printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
+	c[0], c[1], c[2], c[3], c[4]);
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceReset failed!");
-        return 1;
-    }
+	// cudaDeviceReset must be called before exiting in order for profiling and
+	// tracing tools such as Nsight and Visual Profiler to show complete traces.
+	cudaStatus = cudaDeviceReset();
+	if (cudaStatus != cudaSuccess) {
+	fprintf(stderr, "cudaDeviceReset failed!");
+	return 1;
+}
 
-    return 0;
+return 0;
 }
 
 
