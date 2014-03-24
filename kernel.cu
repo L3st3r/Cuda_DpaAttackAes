@@ -8,6 +8,8 @@
 #include <string>
 using namespace std;
 
+#define BLOCK_WIDTH 16
+
 /*
 	PSEUDO CODE:
 
@@ -222,16 +224,23 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
-__global__ void CorrCoefKernel(double *result, int **x, int *y, int n)
+__global__ void CorrCoefKernel(double *result, int **x, int *y, int first_trace, int last_trace)
 {
-    int i = threadIdx.x;
+    //compute at which tracepoint we are at the moment
+  //PM: I'm really not sure if this is right
+    int row = blockIdx.y*blockDim.y+threadIdx.y;
+    int col = blockIdx.x*blockDim.x+threadIdx.x;
+    int tracepoint = row*gridDim.x + col;
+
+    //int i = threadIdx.x;
+    int n = last_trace - first_trace;
     
     _Uint32t sum_x  = 0;
 	   _Uint32t sum_y  = 0;
 
-	    for(int j = 0; j < n; j++)
+	    for(int j = first_trace; j < last_trace; j++)
 	    {
-       sum_x  += x[i][j];
+       sum_x  += x[tracepoint][j];
        sum_y  += y[j];
 	    }
 
@@ -242,10 +251,10 @@ __global__ void CorrCoefKernel(double *result, int **x, int *y, int n)
 	    double divisor1 = 0;       // there is no cuda function sqrt(long double), just sqrt(double)
 	    double divisor2 = 0;
 
-     for(int j = 0; j < n; j++)
+     for(int j = first_trace; j < last_trace; j++)
 	    {
-		    dividend += (x[i][j] - x_average)*(y[j] - y_average); 
-		    divisor1 += (x[i][j] - x_average)*(x[i][j] - x_average);  
+		    dividend += (x[tracepoint][j] - x_average)*(y[j] - y_average); 
+		    divisor1 += (x[tracepoint][j] - x_average)*(x[tracepoint][j] - x_average);  
 		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
 	    }
 
@@ -253,9 +262,9 @@ __global__ void CorrCoefKernel(double *result, int **x, int *y, int n)
 
 	    if ((dividend == 0) || (divisor == 0))
 	    {
-		    result[i] = 0.0;
+		    result[tracepoint] = 0.0;
 	    }else{
-		    result[i] = dividend/divisor;
+		    result[tracepoint] = dividend/divisor;
 	    }		
 }
 
@@ -351,9 +360,12 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
         goto Error;
     }
 
+    int number_of_blocks = ceil( POINTS_PER_TRACE / (BLOCK_WIDTH * BLOCK_WIDTH));
+    dim3 dimBlock(1, BLOCK_WIDTH, BLOCK_WIDTH);
+    dim3 dimGrid(1, 1, number_of_blocks);
 
     // Launch a kernel on the GPU with one thread for each element.
-    CorrCoefKernel<<<1, n>>>(dev_cc, dev_traces, dev_hw, n);
+    CorrCoefKernel<<<dimGrid, dimBlock>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT, TRACE_ENDPOINT);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
