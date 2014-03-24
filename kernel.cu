@@ -115,7 +115,8 @@ void read_traces(int **traces) {
   {
 	  for (int j = 0; j < POINTS_PER_TRACE; j++)
 	  {
-     traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
+     //traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
+     traces[j][i] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);   // easier this way, so we don't need the array traces_at_tracepoint
      //cout << static_cast<int>(memblock[i]);
 	  }
   }
@@ -216,6 +217,43 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
+//__global__ void get_Corr_Coef_parallel(int *result, int **x, int *y, int *n)
+//{
+//    int i = threadIdx.x;
+//    
+//    _Uint32t sum_x  = 0;
+//	   _Uint32t sum_y  = 0;
+//
+//	    for(int j = 0; j < n; j++)
+//	    {
+//       sum_x  += x[i][j];
+//       sum_y  += y[j];
+//	    }
+//
+//     long double x_average = sum_x/n;
+//	    long double y_average = sum_y/n;
+//
+//	    long double dividend = 0;
+//	    long double divisor1 = 0;
+//	    long double divisor2 = 0;
+//
+//     for(int j = 0; j < n; j++)
+//	    {
+//		    dividend += (x[i][j] - x_average)*(y[i] - y_average); 
+//		    divisor1 += (x[i][j] - x_average)*(x[i][j] - x_average); 
+//		    divisor2 += (y[i] - y_average)*(y[i] - y_average); 
+//	    }
+//
+//	    long double divisor = sqrt(divisor1)*sqrt(divisor2);
+//
+//	    if ((dividend == 0) || (divisor == 0))
+//	    {
+//		    result[i] = 0.0;
+//	    }else{
+//		    result[i] = dividend/divisor;
+//	    }		
+//}
+
 /*
  * Function to calculate the Pearson Correlation Coefficient
  */
@@ -263,10 +301,15 @@ int main()
 	
 	// Initialize trace array
 	int **traces;
-	traces = new int *[NUMBER_OF_TRACES];
+	/*traces = new int *[NUMBER_OF_TRACES];
 	for (int i = 0; i < NUMBER_OF_TRACES; i++)
 	{
 		traces[i] = new int[POINTS_PER_TRACE];
+	}*/
+ traces = new int *[POINTS_PER_TRACE];
+ for (int i = 0; i < POINTS_PER_TRACE; i++)
+	{
+		traces[i] = new int[NUMBER_OF_TRACES];
 	}
 
 	// Read traces and store in array
@@ -317,9 +360,9 @@ int main()
    
    double cc = -1;
 	  int key = -1;
-   double highest_actual_cc = -1.0;
+   /*double highest_actual_cc = -1.0;
    double cc_sum = 0.0;
-   double cc_avg = 0.0;
+   double cc_avg = 0.0;*/
 	 
 	  // Loop through all key candidates
      for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
@@ -336,20 +379,22 @@ int main()
 	         }
 	 
          // Calculate Correlation Coefficient 
+
 	     for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
 	     {
 		      // Create "Slice" of Traces at certain point
-		      int *traces_at_trace_point;
+		      /*int *traces_at_trace_point;
 		      traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
 		      for (int t = 0; t < NUMBER_OF_TRACES; t++)
 		      {
 			       traces_at_trace_point[t] = traces[t][trace_point];
-		      }
+		      }*/
 		      // Correlation Coefficient 
-		      cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+		      //cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+        cc = get_Corr_Coef(traces[trace_point], hw, NUMBER_OF_TRACES);
 
-        delete[] traces_at_trace_point;
+        //delete[] traces_at_trace_point;
 
         if(cc > highest_cc)
 		    {
@@ -359,15 +404,15 @@ int main()
 			    cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key << endl;
 
 		    }
-      if (cc > highest_actual_cc)
-      {
-        highest_actual_cc = cc;
-			    //key = key_candidate;
+      //if (cc > highest_actual_cc)
+      //{
+      //  highest_actual_cc = cc;
+			   // //key = key_candidate;
 
-        
+      //  
 
-      }
-        cc_sum += cc;
+      //}
+       // cc_sum += cc;
 
 
 		      //corr[key_candidate][trace_point - TRACE_STARTPOINT] = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
@@ -377,14 +422,15 @@ int main()
 	     }
      // cout << "actual CC = " << highest_actual_cc << ", actual Key Candidate = " << key_candidate << endl;
     
-        cc_avg = cc_sum / NUMBER_OF_TRACES;
-        cout << "key candidate= " << key_candidate << " average = " << cc_avg << " max cc = " << highest_actual_cc <<  endl;
-        cc_avg = 0.0;
-        cc_sum = 0.0;
-          highest_actual_cc = -1;
+        //cc_avg = cc_sum / NUMBER_OF_TRACES;
+        ////cout << "key candidate= " << key_candidate << " average = " << cc_avg << " max cc = " << highest_actual_cc <<  endl;
+        //cc_avg = 0.0;
+        //cc_sum = 0.0;
+        //  highest_actual_cc = -1;
       		    // Find the highest Correlation Coefficient 
 		    
      }
+     cout << "key byte " << key_byte << " complete" << endl;
  }
 
 
