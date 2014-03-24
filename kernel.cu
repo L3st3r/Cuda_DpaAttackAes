@@ -301,7 +301,7 @@ double get_Corr_Coef(int *x, int *y, int n)
 
 // Helper function for computation of the correlation coefficient using CUDA.
 //cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
+cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
 {
   int **dev_traces = 0;
   int *dev_hw = 0;
@@ -317,19 +317,19 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
     }
 
     // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_TRACES * sizeof(int));
+    cudaStatus = cudaMalloc((void**)&dev_cc, n * sizeof(int));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
 
-    cudaStatus = cudaMalloc((void**)&dev_hw, NUMBER_OF_TRACES * sizeof(int));
+    cudaStatus = cudaMalloc((void**)&dev_hw, n * sizeof(int));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
 
-    cudaStatus = cudaMalloc((void**)&dev_traces, POINTS_PER_TRACE * sizeof(int*));
+    cudaStatus = cudaMalloc((void**)&dev_traces, n * sizeof(int*));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -337,7 +337,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
 
    for (int p = 0; p < POINTS_PER_TRACE; p++)
 	  {
-     cudaStatus = cudaMalloc((void**)&dev_traces[p], NUMBER_OF_TRACES * sizeof(int));
+     cudaStatus = cudaMalloc((void**)&dev_traces[p], n * sizeof(int));
      if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -345,7 +345,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
 	  }
 
     // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_hw, hw, NUMBER_OF_TRACES * sizeof(int), cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy(dev_hw, hw, n * sizeof(int), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
@@ -353,7 +353,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
 
     for (int p = 0; p < POINTS_PER_TRACE; p++)
 	   {
-      cudaStatus = cudaMemcpy(dev_traces[p], traces[p], NUMBER_OF_TRACES * sizeof(int), cudaMemcpyHostToDevice);
+      cudaStatus = cudaMemcpy(dev_traces[p], traces[p], n * sizeof(int), cudaMemcpyHostToDevice);
       if (cudaStatus != cudaSuccess) {
           fprintf(stderr, "cudaMemcpy failed!");
           goto Error;
@@ -361,7 +361,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
     }
 
     // Launch a kernel on the GPU with one thread for each element.
-    CorrCoefKernel<<<1, NUMBER_OF_TRACES>>>(dev_cc, dev_traces, dev_hw, 10);
+    CorrCoefKernel<<<1, NUMBER_OF_TRACES>>>(dev_cc, dev_traces, dev_hw, n);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
@@ -381,7 +381,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
     }
 
     // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_TRACES * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaStatus = cudaMemcpy(cc, dev_cc, n * sizeof(int), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
@@ -451,6 +451,14 @@ int main()
 	int *key;
 	key = new int [BYTES_PER_KEY];
 
+ 	// Initialize corr array (event. doch nicht nötig)
+  double **corr;
+  corr = new double *[256];
+  for (int i = 0; i < 256; i++)
+  {
+    corr[i] = new double[TRACE_ENDPOINT - TRACE_STARTPOINT];
+  }
+
 	// Loop through all key bytes
 	for (int key_byte = 0; key_byte < BYTES_PER_KEY; key_byte++)
 	{
@@ -472,11 +480,11 @@ int main()
 	 
 			// Calculate Correlation Coefficient 
 
-   /*cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
+   cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw, TRACE_ENDPOINT - TRACE_STARTPOINT);;
         if (cudaStatus != cudaSuccess) {
             fprintf(stderr, "computeCoeffWithCuda failed!");
             return 1;
-   }*/
+   }
 
 			for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
 			{
@@ -490,9 +498,11 @@ int main()
 				}*/
 
 				// Correlation Coefficient 
-				cc = get_Corr_Coef(traces[trace_point], hw, NUMBER_OF_TRACES);
+				//cc = get_Corr_Coef(traces[trace_point], hw, NUMBER_OF_TRACES);
 
 				/*delete[] traces_at_trace_point;*/
+
+     cc = corr[key_candidate][trace_point];
 
 				if(cc > highest_cc)
 				{
