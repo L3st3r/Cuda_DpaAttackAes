@@ -8,8 +8,6 @@
 #include <string>
 using namespace std;
 
-#define BLOCK_WIDTH 16
-
 /*
 	PSEUDO CODE:
 
@@ -224,23 +222,16 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
-__global__ void CorrCoefKernel(double *result, int **x, int *y, int first_trace, int last_trace)
+__global__ void CorrCoefKernel(double *result, int **x, int *y, int n)
 {
-    //compute at which tracepoint we are at the moment
-  //PM: I'm really not sure if this is right
-    int row = blockIdx.y*blockDim.y+threadIdx.y;
-    int col = blockIdx.x*blockDim.x+threadIdx.x;
-    int tracepoint = row*gridDim.x + col;
-
-    //int i = threadIdx.x;
-    int n = last_trace - first_trace;
+    int i = threadIdx.x;
     
     _Uint32t sum_x  = 0;
 	   _Uint32t sum_y  = 0;
 
-	    for(int j = first_trace; j < last_trace; j++)
+	    for(int j = 0; j < n; j++)
 	    {
-       sum_x  += x[tracepoint][j];
+       sum_x  += x[i][j];
        sum_y  += y[j];
 	    }
 
@@ -251,10 +242,10 @@ __global__ void CorrCoefKernel(double *result, int **x, int *y, int first_trace,
 	    double divisor1 = 0;       // there is no cuda function sqrt(long double), just sqrt(double)
 	    double divisor2 = 0;
 
-     for(int j = first_trace; j < last_trace; j++)
+     for(int j = 0; j < n; j++)
 	    {
-		    dividend += (x[tracepoint][j] - x_average)*(y[j] - y_average); 
-		    divisor1 += (x[tracepoint][j] - x_average)*(x[tracepoint][j] - x_average);  
+		    dividend += (x[i][j] - x_average)*(y[j] - y_average); 
+		    divisor1 += (x[i][j] - x_average)*(x[i][j] - x_average);  
 		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
 	    }
 
@@ -262,9 +253,9 @@ __global__ void CorrCoefKernel(double *result, int **x, int *y, int first_trace,
 
 	    if ((dividend == 0) || (divisor == 0))
 	    {
-		    result[tracepoint] = 0.0;
+		    result[i] = 0.0;
 	    }else{
-		    result[tracepoint] = dividend/divisor;
+		    result[i] = dividend/divisor;
 	    }		
 }
 
@@ -310,7 +301,7 @@ double get_Corr_Coef(int *x, int *y, int n)
 
 // Helper function for computation of the correlation coefficient using CUDA.
 //cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
+cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
 {
   int **dev_traces = 0;
   int *dev_hw = 0;
@@ -327,13 +318,13 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
     }
 
     // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_cc, n * sizeof(double));
+    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_TRACES * sizeof(double));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
 
-    cudaStatus = cudaMalloc((void**)&dev_hw, n * sizeof(int));
+    cudaStatus = cudaMalloc((void**)&dev_hw, NUMBER_OF_TRACES * sizeof(int));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -348,24 +339,21 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
 
 
     // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_hw, hw, n * sizeof(int), cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy(dev_hw, hw, NUMBER_OF_TRACES * sizeof(int), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy2D(dev_traces, pitch, traces, POINTS_PER_TRACE * sizeof(int), POINTS_PER_TRACE * sizeof(int), n, cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy2D(dev_traces, pitch, traces, POINTS_PER_TRACE * sizeof(int), POINTS_PER_TRACE * sizeof(int), NUMBER_OF_TRACES, cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy2D failed!");
         goto Error;
     }
 
-    int number_of_blocks = ceil( POINTS_PER_TRACE / (BLOCK_WIDTH * BLOCK_WIDTH));
-    dim3 dimBlock(1, BLOCK_WIDTH, BLOCK_WIDTH);
-    dim3 dimGrid(1, 1, number_of_blocks);
 
     // Launch a kernel on the GPU with one thread for each element.
-    CorrCoefKernel<<<dimGrid, dimBlock>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT, TRACE_ENDPOINT);
+    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, NUMBER_OF_TRACES);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
@@ -385,7 +373,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw, int n)
     }
 
     // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(cc, dev_cc, n * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_TRACES * sizeof(double), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
@@ -484,7 +472,7 @@ int main()
 	 
 			// Calculate Correlation Coefficient 
 
-   cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw, TRACE_ENDPOINT - TRACE_STARTPOINT);;
+   cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
         if (cudaStatus != cudaSuccess) {
             fprintf(stderr, "computeCoeffWithCuda failed!");
             return 1;
