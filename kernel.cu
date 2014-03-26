@@ -91,11 +91,30 @@ string TRACE_FILE = "Traces00000.dat";
 string PLAINTEXT_FILE = "plaintexts.dat";
 string CIPHERTEXT_FILE = "ciphertexts.dat";
 
+//-- dynamic 2d arrays with contiguously stored data
+// copied from https://devtalk.nvidia.com/
+template <class T> class array2d
+{
+  T *data;
+  size_t R, C;
+
+  public:
+  array2d (size_t row, size_t col)
+  {
+    data = new T [row*col];
+    R = row;
+    C = col;
+  }
+
+  T* operator[] (size_t row) { return &(data[row*C]);	}
+  T* operator& () { return &(data[0]); }
+  ~array2d () { delete [] data; }
+};
 
 /*
  *	Function to read in values of traces
  */
-void read_traces(int **traces, string filename) {
+void read_traces_array(array2d<int> traces_array, string filename) {
   streampos size;
   char * memblock;
 
@@ -121,10 +140,51 @@ void read_traces(int **traces, string filename) {
 	  for (int j = 0; j < POINTS_PER_TRACE; j++)
 	  {
      //traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
-     traces[j][i] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);   // easier this way, so we don't need the array traces_at_tracepoint
+     traces_array[j][i] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);   // easier this way, so we don't need the array traces_at_tracepoint
      //cout << static_cast<int>(memblock[i]);
 	  }
   }
+  delete[] memblock;
+}
+
+/*
+ *	Function to read in values of traces
+ */
+void read_traces(int *traces, string filename) {
+  streampos size;
+  char * memblock;
+
+  ifstream file (filename, ios::in|ios::binary|ios::ate);
+  if (file.is_open())
+  {
+    size = file.tellg();
+    memblock = new char [size];
+    file.seekg (0, ios::beg);
+    file.read (memblock, size);
+    file.close();
+
+    cout << "Content of file " << filename << " is in memory." << endl;   
+  }
+  else
+  {
+    cout << "Unable to open file" << filename << endl;
+    return;
+  }
+
+  for (int i = 0; i < NUMBER_OF_TRACES*POINTS_PER_TRACE; i++)
+  {
+     traces[i] = static_cast<int>(memblock[i]);   // easier this way, so we don't need the array traces_at_tracepoint
+  }
+
+  //for (int i = 0; i < NUMBER_OF_TRACES; i++)
+  //{
+	 // for (int j = 0; j < POINTS_PER_TRACE; j++)
+	 // {
+  //   //traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
+  //   traces[j][i] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);   // easier this way, so we don't need the array traces_at_tracepoint
+  //   //cout << static_cast<int>(memblock[i]);
+	 // }
+  //}
   delete[] memblock;
 }
 
@@ -222,30 +282,30 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
-__global__ void CorrCoefKernel(double *result, int **x, int *y, int n)
+__global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
 {
     int i = threadIdx.x;
     
     _Uint32t sum_x  = 0;
 	   _Uint32t sum_y  = 0;
 
-	    for(int j = 0; j < n; j++)
+	    for(int j = 0; j < row; j++)
 	    {
-       sum_x  += x[i][j];
+       sum_x  += x[i*col+j];
        sum_y  += y[j];
 	    }
 
-     double x_average = sum_x/n;
-	    double y_average = sum_y/n;
+     double x_average = sum_x/row;
+	    double y_average = sum_y/row;
 
 	    double dividend = 0;
 	    double divisor1 = 0;       // there is no cuda function sqrt(long double), just sqrt(double)
 	    double divisor2 = 0;
 
-     for(int j = 0; j < n; j++)
+     for(int j = 0; j < row; j++)
 	    {
-		    dividend += (x[i][j] - x_average)*(y[j] - y_average); 
-		    divisor1 += (x[i][j] - x_average)*(x[i][j] - x_average);  
+		    dividend += (x[i*col+j] - x_average)*(y[j] - y_average); 
+		    divisor1 += (x[i*col+j] - x_average)*(x[i*col+j] - x_average);  
 		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
 	    }
 
@@ -301,13 +361,13 @@ double get_Corr_Coef(int *x, int *y, int n)
 
 // Helper function for computation of the correlation coefficient using CUDA.
 //cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
+cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
 {
-  int **dev_traces = 0;
+  int *dev_traces = 0;
   int *dev_hw = 0;
   double *dev_cc = 0;
   cudaError_t cudaStatus;
-  size_t pitch;
+  //size_t pitch;
     
 
     // Choose which GPU to run on, change this on a multi-GPU system.
@@ -330,12 +390,18 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
         goto Error;
     }
 
-    cudaStatus = cudaMallocPitch(&dev_traces, &pitch,
+    cudaStatus = cudaMalloc((void**)&dev_traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    /*cudaStatus = cudaMallocPitch(&dev_traces, &pitch,
                 POINTS_PER_TRACE * sizeof(int), NUMBER_OF_TRACES);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMallocPitch failed!");
         goto Error;
-    }
+    }*/
 
 
     // Copy input vectors from host memory to GPU buffers.
@@ -345,15 +411,39 @@ cudaError_t computeCoeffWithCuda(double *cc, int **traces, int *hw)
         goto Error;
     }
 
-    cudaStatus = cudaMemcpy2D(dev_traces, pitch, traces, POINTS_PER_TRACE * sizeof(int), POINTS_PER_TRACE * sizeof(int), NUMBER_OF_TRACES, cudaMemcpyHostToDevice);
+    cudaStatus = cudaMemcpy(dev_traces, traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int), cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy2D failed!");
+        fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
     }
 
+    //cudaStatus = cudaMemcpy(dev_traces, traces, POINTS_PER_TRACE, cudaMemcpyHostToDevice);
+    //if (cudaStatus != cudaSuccess) {
+    //    fprintf(stderr, "cudaMemcpy failed!");
+    //    goto Error;
+    //}
+
+    //for (int p = 0; p < POINTS_PER_TRACE; p++)
+   // {
+      /*cudaStatus = cudaMemcpy(dev_traces, traces[10], NUMBER_OF_TRACES, cudaMemcpyHostToDevice);
+      if (cudaStatus != cudaSuccess) {
+          fprintf(stderr, "cudaMemcpy failed!");
+          goto Error;
+      }*/
+   // }
+
+    /*int n = 1;
+    int m = 1;*/
+
+    /*cudaStatus = cudaMemcpy2D(dev_traces, pitch, &traces_array, n * sizeof(int), n * sizeof(int), m, cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy2D failed!");
+        goto Error;
+    }*/
+
 
     // Launch a kernel on the GPU with one thread for each element.
-    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, NUMBER_OF_TRACES);
+    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, POINTS_PER_TRACE, NUMBER_OF_TRACES);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
@@ -383,10 +473,10 @@ Error:
     cudaFree(dev_cc);
     cudaFree(dev_hw);
 
-    for (int p = 0; p < POINTS_PER_TRACE; p++)
-	   {
-       cudaFree(dev_traces[p]);
-	   }
+    //for (int p = 0; p < POINTS_PER_TRACE; p++)
+	   //{
+    //   cudaFree(dev_traces[p]);
+	   //}
     cudaFree(dev_traces);
     
     
@@ -394,23 +484,77 @@ Error:
 }
 
 
+
+void printDevProp(cudaDeviceProp devProp)
+{
+    printf("Major revision number:         %d\n",  devProp.major);
+    printf("Minor revision number:         %d\n",  devProp.minor);
+    printf("Name:                          %s\n",  devProp.name);
+    printf("Total global memory:           %u\n",  devProp.totalGlobalMem);
+    printf("Total shared memory per block: %u\n",  devProp.sharedMemPerBlock);
+    printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
+    printf("Warp size:                     %d\n",  devProp.warpSize);
+    printf("Maximum memory pitch:          %u\n",  devProp.memPitch);
+    printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
+    for (int i = 0; i < 3; ++i)
+    printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
+    for (int i = 0; i < 3; ++i)
+    printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
+    printf("Clock rate:                    %d\n",  devProp.clockRate);
+    printf("Total constant memory:         %u\n",  devProp.totalConstMem);
+    printf("Texture alignment:             %u\n",  devProp.textureAlignment);
+    printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
+    printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
+    printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
+    return;
+}
+
+void printDevInfos()
+{
+  // Number of CUDA devices
+    int devCount;
+    cudaGetDeviceCount(&devCount);
+    printf("CUDA Device Query...\n");
+    printf("There are %d CUDA devices.\n", devCount);
+ 
+    // Iterate through devices
+    for (int i = 0; i < devCount; ++i)
+    {
+        // Get device properties
+        printf("\nCUDA Device #%d\n", i);
+        cudaDeviceProp devProp;
+        cudaGetDeviceProperties(&devProp, i);
+        printDevProp(devProp);
+    }
+ 
+    printf("\nPress any key to exit...");
+    char c;
+    scanf("%c", &c);
+}
+
+
 int main()
 {
 // #################### OWN PROGRAM #####################
 	
+  /*printDevInfos();*/
+
 	// Start measuring time
 	const clock_t begin_time = clock();
 	
 	// Initialize trace array
-	int **traces;
-	traces = new int *[POINTS_PER_TRACE];
- for (int i = 0; i < POINTS_PER_TRACE; i++)
-	{
-		traces[i] = new int[NUMBER_OF_TRACES];
-	}
+ //array2d<int> traces_array(POINTS_PER_TRACE,NUMBER_OF_TRACES);
 
-	// Read traces and store in array
+	int *traces;
+	traces = new int [POINTS_PER_TRACE*NUMBER_OF_TRACES];
+ //for (int i = 0; i < POINTS_PER_TRACE; i++)
+	//{
+	//	traces[i] = new int[NUMBER_OF_TRACES];
+	//}
+
+	//// Read traces and store in array
 	read_traces(traces, TRACE_FILE);
+ //read_traces_array(traces_array, TRACE_FILE);
 
 	// Stop measuring time
 	std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
@@ -501,7 +645,7 @@ int main()
 					highest_cc = cc;
 					key[key_byte] = key_candidate;
 					//highest_trace_point = trace_point;
-					//cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key_candidate << ", Trace Point = " << highest_trace_point << endl;
+					cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key_candidate << endl;
 				}
 			}
 		}
@@ -517,15 +661,23 @@ int main()
 
 
 	// deleting everything
-	for (int i = 0; i < NUMBER_OF_TRACES; i++)
+
+ cudaError_t cudaStatus = cudaDeviceReset();
+	if (cudaStatus != cudaSuccess) {
+	fprintf(stderr, "cudaDeviceReset failed!");
+	return 1;
+}
+	/*for (int i = 0; i < NUMBER_OF_TRACES; i++)
 	{
 		delete[] traces[i];
-	}
+	}*/
 	for (int i = 0; i < NUMBER_OF_TEXTS; i++)
 	{
 		delete[] plaintexts[i];
 	}
-	delete[] traces;
+	/*delete[] traces;*/
+ //traces_array.~array2d();
+ delete[] traces;
 	delete[] plaintexts;
 	delete[] hw;
 	delete[] key;
@@ -552,28 +704,28 @@ int main()
 
 // #################### OLD SAMPLE STUFF #####################
 
-	const int arraySize = 5;
-	const int a[arraySize] = { 1, 2, 3, 4, 5 };
-	const int b[arraySize] = { 10, 20, 30, 40, 50 };
-	int c[arraySize] = { 0 };
-
-	// Add vectors in parallel.
-	cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-	if (cudaStatus != cudaSuccess) {
-	fprintf(stderr, "addWithCuda failed!");
-	return 1;
-	}
-
-	printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-	c[0], c[1], c[2], c[3], c[4]);
-
-	// cudaDeviceReset must be called before exiting in order for profiling and
-	// tracing tools such as Nsight and Visual Profiler to show complete traces.
-	cudaStatus = cudaDeviceReset();
-	if (cudaStatus != cudaSuccess) {
-	fprintf(stderr, "cudaDeviceReset failed!");
-	return 1;
-}
+//	const int arraySize = 5;
+//	const int a[arraySize] = { 1, 2, 3, 4, 5 };
+//	const int b[arraySize] = { 10, 20, 30, 40, 50 };
+//	int c[arraySize] = { 0 };
+//
+//	// Add vectors in parallel.
+//	cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
+//	if (cudaStatus != cudaSuccess) {
+//	fprintf(stderr, "addWithCuda failed!");
+//	return 1;
+//	}
+//
+//	printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
+//	c[0], c[1], c[2], c[3], c[4]);
+//
+//	// cudaDeviceReset must be called before exiting in order for profiling and
+//	// tracing tools such as Nsight and Visual Profiler to show complete traces.
+//	cudaStatus = cudaDeviceReset();
+//	if (cudaStatus != cudaSuccess) {
+//	fprintf(stderr, "cudaDeviceReset failed!");
+//	return 1;
+//}
 
 return 0;
 }
