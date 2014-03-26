@@ -87,6 +87,14 @@
       <Command>echo copy "$(CudaToolkitBinDir)\cudart*.dll" "$(OutDir)"
 copy "$(CudaToolkitBinDir)\cudart*.dll" "$(OutDir)"</Command>
     </PostBuildEvent>
+    <CudaCompile>
+      <CodeGeneration>compute_30,sm_30</CodeGeneration>
+      <AdditionalOptions>-arch=sm_30 %(AdditionalOptions)</AdditionalOptions>
+    </CudaCompile>
+    <CustomBuildStep>
+      <Command>
+      </Command>
+    </CustomBuildStep>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
