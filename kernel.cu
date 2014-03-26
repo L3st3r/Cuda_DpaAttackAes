@@ -297,12 +297,12 @@ __global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
        sum_y  += y[j];
 	    }
 
-     double x_average = sum_x/row;
-	    double y_average = sum_y/row;
+     long double x_average = sum_x/row;
+	    long double y_average = sum_y/row;
 
-	    double dividend = 0;
-	    double divisor1 = 0;       // there is no cuda function sqrt(long double), just sqrt(double)
-	    double divisor2 = 0;
+	    long double dividend = 0;
+	    long double divisor1 = 0;      
+	    long double divisor2 = 0;
 
      for(int j = 0; j < row; j++)
 	    {
@@ -311,7 +311,7 @@ __global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
 		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
 	    }
 
-	    double divisor = sqrt(divisor1)*sqrt(divisor2);
+	    long double divisor = sqrt((double) divisor1)*sqrt((double) divisor2);  // PROBLEM: there is no cuda function sqrt(long double), just sqrt(double)
 
 	    if ((dividend == 0) || (divisor == 0))
 	    {
@@ -376,9 +376,8 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
   double *dev_cc = 0;
   cudaError_t cudaStatus;
   //size_t pitch;
-    
 
-    // Choose which GPU to run on, change this on a multi-GPU system.
+     // Choose which GPU to run on, change this on a multi-GPU system.
     cudaStatus = cudaSetDevice(0);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
@@ -403,6 +402,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
     }
+
 
     /*cudaStatus = cudaMallocPitch(&dev_traces, &pitch,
                 POINTS_PER_TRACE * sizeof(int), NUMBER_OF_TRACES);
@@ -545,7 +545,7 @@ int main()
 {
 // #################### OWN PROGRAM #####################
 	
-  /*printDevInfos();*/
+  //printDevInfos();
 
 	// Start measuring time
 	const clock_t begin_time = clock();
@@ -674,12 +674,7 @@ int main()
 	// deleting everything
  std::cout << "GPU not reseted yet, Time: " << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
 
- cudaError_t cudaStatus = cudaDeviceReset();
-	if (cudaStatus != cudaSuccess) {
-	fprintf(stderr, "cudaDeviceReset failed!");
-	return 1;
-}
-	/*for (int i = 0; i < NUMBER_OF_TRACES; i++)
+ 	/*for (int i = 0; i < NUMBER_OF_TRACES; i++)
 	{
 		delete[] traces[i];
 	}*/
@@ -699,6 +694,13 @@ int main()
     delete[] corr[i];
  }
   delete[] corr;
+
+ cudaError_t cudaStatus = cudaDeviceReset();
+	if (cudaStatus != cudaSuccess) {
+	fprintf(stderr, "cudaDeviceReset failed!");
+	return 1;
+}
+
 
  // cudaDeviceReset must be called before exiting in order for profiling and
 	// tracing tools such as Nsight and Visual Profiler to show complete traces.
