@@ -285,6 +285,8 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
 __global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
 {
     int i = threadIdx.x;
+    //result[i] = -1;
+   // return;
     
     _Uint32t sum_x  = 0;
 	   _Uint32t sum_y  = 0;
@@ -334,12 +336,18 @@ double get_Corr_Coef(int *x, int *y, int n)
 		sum_y  += y[i];
 	}
 
-	long double x_average = sum_x/n;
-	long double y_average = sum_y/n;
+	//long double x_average = sum_x/n;
+	//long double y_average = sum_y/n;
 
-	long double dividend = 0;
-	long double divisor1 = 0;
-	long double divisor2 = 0;
+	//long double dividend = 0;
+	//long double divisor1 = 0;
+	//long double divisor2 = 0;
+ 	double x_average = sum_x/n;
+	double y_average = sum_y/n;
+
+	 double dividend = 0;
+	 double divisor1 = 0;
+	 double divisor2 = 0;
 
 	for(int i = 0; i < n; i++)
 	{
@@ -616,36 +624,39 @@ int main()
 	 
 			// Calculate Correlation Coefficient 
 
-   /*cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
+   cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
         if (cudaStatus != cudaSuccess) {
             fprintf(stderr, "computeCoeffWithCuda failed!");
             return 1;
-   }*/
+   }
 
-			for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
+			/*for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)*/
+   for (int trace_point = 0; trace_point < TRACE_ENDPOINT-TRACE_STARTPOINT; trace_point++)
 			{
 				// Create "Slice" of Traces at certain point
-				int *traces_at_trace_point;
-				traces_at_trace_point = new int [NUMBER_OF_TRACES];
+				//int *traces_at_trace_point;
+				//traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
-				for (int t = 0; t < NUMBER_OF_TRACES; t++)
-				{
-					traces_at_trace_point[t] = traces[trace_point*NUMBER_OF_TRACES+t];
-				}
+				//for (int t = 0; t < NUMBER_OF_TRACES; t++)
+				//{
+				//	traces_at_trace_point[t] = traces[trace_point+t*NUMBER_OF_TRACES];
+				//}
 
 				// Correlation Coefficient 
-				cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+				//cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
 
-				delete[] traces_at_trace_point;
+				//delete[] traces_at_trace_point;
 
-     //cc = corr[key_candidate][trace_point];
+     cc = corr[key_candidate][trace_point];
+     //if ( cc == -5 )
+      // cout << "cc = " << cc << endl;
 
 				if(cc > highest_cc)
 				{
 					highest_cc = cc;
 					key[key_byte] = key_candidate;
 					//highest_trace_point = trace_point;
-					cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key_candidate << endl;
+					/*cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key_candidate << endl;*/
 				}
 			}
 		}
