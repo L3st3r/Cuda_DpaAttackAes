@@ -616,29 +616,29 @@ int main()
 	 
 			// Calculate Correlation Coefficient 
 
-   cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
+   /*cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
         if (cudaStatus != cudaSuccess) {
             fprintf(stderr, "computeCoeffWithCuda failed!");
             return 1;
-   }
+   }*/
 
 			for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
 			{
 				// Create "Slice" of Traces at certain point
-				/*int *traces_at_trace_point;
+				int *traces_at_trace_point;
 				traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
 				for (int t = 0; t < NUMBER_OF_TRACES; t++)
 				{
-					traces_at_trace_point[t] = traces[t][trace_point];
-				}*/
+					traces_at_trace_point[t] = traces[trace_point*NUMBER_OF_TRACES+t];
+				}
 
 				// Correlation Coefficient 
-				//cc = get_Corr_Coef(traces[trace_point], hw, NUMBER_OF_TRACES);
+				cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
 
-				/*delete[] traces_at_trace_point;*/
+				delete[] traces_at_trace_point;
 
-     cc = corr[key_candidate][trace_point];
+     //cc = corr[key_candidate][trace_point];
 
 				if(cc > highest_cc)
 				{
