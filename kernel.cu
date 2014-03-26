@@ -6,6 +6,7 @@
 #include <fstream>
 #include <time.h>
 #include <string>
+#include <iomanip>
 using namespace std;
 
 /*
@@ -240,6 +241,32 @@ unsigned int get_Hw(unsigned int b)
 
 
 /*
+ * Function that computes the square root using Babylonian Method + some manipulations on IEEE 32 bit floating point representation 
+ * source: http://www.codeproject.com/Articles/69941/Best-Square-Root-Method-Algorithm-Function-Precisi
+ */
+long double sqrt1(long double x)  
+{
+  const int steps = 20;
+
+  union
+  {
+    int i;
+    long double x;
+  } u;
+  u.x = x;
+  u.i = (1<<29) + (u.i >> 1) - (1<<22); 
+  
+
+  for (int j=0; j < steps; j++)
+  {
+    u.x =       u.x + x/u.x;
+    u.x = 0.25f*u.x + x/u.x;
+  }
+
+  return u.x;
+} 
+
+/*
  *	Function that computes the T-Table output for a plaintext-byte and a key candidate
  */
 unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candidate)
@@ -282,9 +309,10 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
   return ttable0[plaintext_byte ^ key_candidate];
 }
 
-__global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
+
+__global__ void CorrCoefKernel(double *result, int *x, int *y, int first_col, int col, int row) //row = NUMBER_OF_TRACES, col = POINTS_PER_TRACE
 {
-    int i = threadIdx.x;
+    int i = threadIdx.x + first_col;
     //result[i] = -1;
    // return;
     
@@ -293,7 +321,7 @@ __global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
 
 	    for(int j = 0; j < row; j++)
 	    {
-       sum_x  += x[i*col+j];
+       sum_x  += x[i+j*col];
        sum_y  += y[j];
 	    }
 
@@ -306,8 +334,8 @@ __global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
 
      for(int j = 0; j < row; j++)
 	    {
-		    dividend += (x[i*col+j] - x_average)*(y[j] - y_average); 
-		    divisor1 += (x[i*col+j] - x_average)*(x[i*col+j] - x_average);  
+		    dividend += (x[i+j*col] - x_average)*(y[j] - y_average); 
+		    divisor1 += (x[i+j*col] - x_average)*(x[i+j*col] - x_average);  
 		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
 	    }
 
@@ -315,9 +343,9 @@ __global__ void CorrCoefKernel(double *result, int *x, int *y, int col, int row)
 
 	    if ((dividend == 0) || (divisor == 0))
 	    {
-		    result[i] = 0.0;
+		    result[i-first_col] = 0.0;
 	    }else{
-		    result[i] = dividend/divisor;
+		    result[i-first_col] = dividend/divisor;
 	    }		
 }
 
@@ -336,18 +364,18 @@ double get_Corr_Coef(int *x, int *y, int n)
 		sum_y  += y[i];
 	}
 
-	//long double x_average = sum_x/n;
-	//long double y_average = sum_y/n;
+	long double x_average = sum_x/n;
+	long double y_average = sum_y/n;
 
-	//long double dividend = 0;
-	//long double divisor1 = 0;
-	//long double divisor2 = 0;
- 	double x_average = sum_x/n;
+	long double dividend = 0;
+	long double divisor1 = 0;
+	long double divisor2 = 0;
+ 	/*double x_average = sum_x/n;
 	double y_average = sum_y/n;
 
 	 double dividend = 0;
 	 double divisor1 = 0;
-	 double divisor2 = 0;
+	 double divisor2 = 0;*/
 
 	for(int i = 0; i < n; i++)
 	{
@@ -377,6 +405,8 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
   cudaError_t cudaStatus;
   //size_t pitch;
 
+      /*dev_traces = traces;*/
+
      // Choose which GPU to run on, change this on a multi-GPU system.
     cudaStatus = cudaSetDevice(0);
     if (cudaStatus != cudaSuccess) {
@@ -385,7 +415,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
     }
 
     // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_TRACES * sizeof(double));
+    cudaStatus = cudaMalloc((void**)&dev_cc, (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(double));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -425,23 +455,6 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
         goto Error;
     }
 
-    //cudaStatus = cudaMemcpy(dev_traces, traces, POINTS_PER_TRACE, cudaMemcpyHostToDevice);
-    //if (cudaStatus != cudaSuccess) {
-    //    fprintf(stderr, "cudaMemcpy failed!");
-    //    goto Error;
-    //}
-
-    //for (int p = 0; p < POINTS_PER_TRACE; p++)
-   // {
-      /*cudaStatus = cudaMemcpy(dev_traces, traces[10], NUMBER_OF_TRACES, cudaMemcpyHostToDevice);
-      if (cudaStatus != cudaSuccess) {
-          fprintf(stderr, "cudaMemcpy failed!");
-          goto Error;
-      }*/
-   // }
-
-    /*int n = 1;
-    int m = 1;*/
 
     /*cudaStatus = cudaMemcpy2D(dev_traces, pitch, &traces_array, n * sizeof(int), n * sizeof(int), m, cudaMemcpyHostToDevice);
     if (cudaStatus != cudaSuccess) {
@@ -450,8 +463,8 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
     }*/
 
 
-    // Launch a kernel on the GPU with one thread for each element.
-    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, POINTS_PER_TRACE, NUMBER_OF_TRACES);
+    // Launch a kernel on the GPU with one thread for each tracepoint.
+    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT, POINTS_PER_TRACE, NUMBER_OF_TRACES);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
@@ -471,7 +484,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
     }
 
     // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_TRACES * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaStatus = cudaMemcpy(cc, dev_cc, (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(double), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
@@ -541,11 +554,23 @@ void printDevInfos()
 }
 
 
+
 int main()
 {
 // #################### OWN PROGRAM #####################
 	
   //printDevInfos();
+  /* cout << setprecision(30);*/
+  ///*cout << "sqrt of 20 = " << sqrt_long_double(20) << endl;*/
+  //cout << "sqrt1(20) = " << sqrt1(20) << endl;
+  //cout << "sqrt (long double 20) = " << sqrt ((long double) 20) << endl;
+  //cout << "sqrt (20) = " << sqrt (20) << endl;
+
+ /* cout << "sqrt(20) - sqrt1(20) = " << sqrt((long double) 20) - sqrt1(20) << endl;
+  if ( sqrt((long double) 20) - sqrt1(20) != 0)
+    cout << "bigger" << endl;
+  else
+    cout << "equal" << endl;*/
 
 	// Start measuring time
 	const clock_t begin_time = clock();
@@ -563,6 +588,21 @@ int main()
 	//// Read traces and store in array
 	read_traces(traces, TRACE_FILE);
  //read_traces_array(traces_array, TRACE_FILE);
+
+ //int *dev_traces = 0;
+ //cudaError_t cudaStatus;
+
+ //    cudaStatus = cudaMalloc((void**)&dev_traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int));
+ //   if (cudaStatus != cudaSuccess) {
+ //       fprintf(stderr, "cudaMalloc failed!");
+ //       return 1;
+ //   }
+
+ //    cudaStatus = cudaMemcpy(dev_traces, traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int), cudaMemcpyHostToDevice);
+ //   if (cudaStatus != cudaSuccess) {
+ //       fprintf(stderr, "cudaMemcpy failed!");
+ //       return 1;
+ //   }
 
 	// Stop measuring time
 	std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
@@ -615,6 +655,8 @@ int main()
 		for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
 		{   
 			// Measure hamming weight for every trace
+    //if (key_candidate == 95)
+    //    int xyz = 01;
 			for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
 			{
 				// Calculate the hamming weight
@@ -630,24 +672,24 @@ int main()
             return 1;
    }
 
-			/*for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)*/
-   for (int trace_point = 0; trace_point < TRACE_ENDPOINT-TRACE_STARTPOINT; trace_point++)
+			for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
+   /*for (int trace_point = 0; trace_point < TRACE_ENDPOINT-TRACE_STARTPOINT; trace_point++)*/
 			{
 				// Create "Slice" of Traces at certain point
-				//int *traces_at_trace_point;
-				//traces_at_trace_point = new int [NUMBER_OF_TRACES];
+				/*int *traces_at_trace_point;
+				traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
-				//for (int t = 0; t < NUMBER_OF_TRACES; t++)
-				//{
-				//	traces_at_trace_point[t] = traces[trace_point+t*NUMBER_OF_TRACES];
-				//}
+				for (int t = 0; t < NUMBER_OF_TRACES; t++)
+				{
+					traces_at_trace_point[t] = traces[trace_point+t*NUMBER_OF_TRACES];
+				}*/
 
 				// Correlation Coefficient 
-				//cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+				/*cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
 
-				//delete[] traces_at_trace_point;
+				delete[] traces_at_trace_point;*/
 
-     cc = corr[key_candidate][trace_point];
+     cc = corr[key_candidate][trace_point-TRACE_STARTPOINT];
      //if ( cc == -5 )
       // cout << "cc = " << cc << endl;
 
@@ -694,6 +736,8 @@ int main()
     delete[] corr[i];
  }
   delete[] corr;
+
+ /* cudaFree(dev_traces);*/
 
  cudaError_t cudaStatus = cudaDeviceReset();
 	if (cudaStatus != cudaSuccess) {
