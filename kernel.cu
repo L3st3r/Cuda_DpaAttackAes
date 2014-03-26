@@ -6,91 +6,84 @@
 #include <fstream>
 #include <time.h>
 #include <string>
-#include <iomanip>
 using namespace std;
 
 /*
-	PSEUDO CODE:
+ *  Global Configuration
+ */
+#define GPU             // {CPU, GPU}
 
-% Loop through all key bytes
-for key = 0 to 15 do
+#define NUMBER_OF_TRACES 10000
+#define POINTS_PER_TRACE 10000
+#define NUMBER_OF_TEXTS 10000
+#define BYTES_PER_TEXT 16     // fix for AES
+#define BYTES_PER_KEY 2       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
 
-	% Loop through all key candidates
-	for key_candidate = 0 to 255 do
+#define TRACE_STARTPOINT 550
+#define TRACE_ENDPOINT 600
 
-		% Measure hamming weight for every trace
-		for trace = 0 to 9999 do
-
-			% Calculate the hamming weight
-			hw[trace] = HW(T-Table(plaintext[trace, key] XOR key_candidate));
-
-		end for
-
-		% Estimated points where first T-Table operation is executed
-		% E.g., startpoint = 0; endpoint = 900
-		for i = startpoint to endpoint do
-		
-			% Calculate the correlation coefficient
-			cc_temp = 0;
-			for trace = 0 to 9999 do
-				cc_temp += CorrCoef(Trace[trace, i], hw[trace]);
-			end for
-			cc[key, i] = cc_temp;
-
-		end for
-	end for
-end for
-*/
+string TRACE_FILE = "Traces00000.dat";
+string PLAINTEXT_FILE = "plaintexts.dat";
+string CIPHERTEXT_FILE = "ciphertexts.dat";
 
 /*
-	NEEDED FUNCTIONS AND KERNELS:
-
-for the computation:					// I just looked in your pseudo code so far
-	(1) adding cc_temp -> kernel
-	(2) for loop around (1) -> ?
-	(3) HW calculation -> function (a kernel would be an overkill here, wouldn't it?)
-
-	everything else should be done on the CPU (maybe even inside of the main()-function)
-
-Input / Output:
-	I1: Input from text files, reading in the power consumption values
-	O1: Output of the results: correlation coefficient per key hypothesis (?)
-
-
 
 	CORRECT CIPHER KEY: 2b  7e  15  16  28  ae  d2  a6  ab  f7  15  88  09  cf  4f  3c
                    dec: 043 126 021 022 040 174 210 166 171 247 021 136 009 207 079 060		 
 */
 
-// #################### OLD SAMPLE STUFF #####################
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
+
+
+// #################### CURRENTLY UNUSED FUNCTIONS #####################
 
 
 
-__global__ void addKernel(int *c, const int *a, const int *b)
+void printDevProp(cudaDeviceProp devProp)
 {
-    int i = threadIdx.x;
-    c[i] = a[i] + b[i];
+    printf("Major revision number:         %d\n",  devProp.major);
+    printf("Minor revision number:         %d\n",  devProp.minor);
+    printf("Name:                          %s\n",  devProp.name);
+    printf("Total global memory:           %u\n",  devProp.totalGlobalMem);
+    printf("Total shared memory per block: %u\n",  devProp.sharedMemPerBlock);
+    printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
+    printf("Warp size:                     %d\n",  devProp.warpSize);
+    printf("Maximum memory pitch:          %u\n",  devProp.memPitch);
+    printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
+    for (int i = 0; i < 3; ++i)
+    printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
+    for (int i = 0; i < 3; ++i)
+    printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
+    printf("Clock rate:                    %d\n",  devProp.clockRate);
+    printf("Total constant memory:         %u\n",  devProp.totalConstMem);
+    printf("Texture alignment:             %u\n",  devProp.textureAlignment);
+    printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
+    printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
+    printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
+    return;
 }
 
-
-// #################### OWN PROGRAM #####################
-
-/*
- *  Global Configuration
- */
-int NUMBER_OF_TRACES = 10000;
-int POINTS_PER_TRACE = 10000;
-int NUMBER_OF_TEXTS = 10000;
-int BYTES_PER_TEXT = 16;      // fix for AES
-int BYTES_PER_KEY = 16;       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
-
-int TRACE_STARTPOINT = 550;
-int TRACE_ENDPOINT = 600;
-
-string TRACE_FILE = "Traces00000.dat";
-string PLAINTEXT_FILE = "plaintexts.dat";
-string CIPHERTEXT_FILE = "ciphertexts.dat";
+void printDevInfos()
+{
+  // Number of CUDA devices
+    int devCount;
+    cudaGetDeviceCount(&devCount);
+    printf("CUDA Device Query...\n");
+    printf("There are %d CUDA devices.\n", devCount);
+ 
+    // Iterate through devices
+    for (int i = 0; i < devCount; ++i)
+    {
+        // Get device properties
+        printf("\nCUDA Device #%d\n", i);
+        cudaDeviceProp devProp;
+        cudaGetDeviceProperties(&devProp, i);
+        printDevProp(devProp);
+    }
+ 
+    printf("\nPress any key to exit...");
+    char c;
+    scanf("%c", &c);
+}
 
 //-- dynamic 2d arrays with contiguously stored data
 // copied from https://devtalk.nvidia.com/
@@ -147,6 +140,10 @@ void read_traces_array(array2d<int> traces_array, string filename) {
   }
   delete[] memblock;
 }
+
+#
+
+// #################### ACTUAL PROGRAM #####################
 
 /*
  *	Function to read in values of traces
@@ -241,32 +238,6 @@ unsigned int get_Hw(unsigned int b)
 
 
 /*
- * Function that computes the square root using Babylonian Method + some manipulations on IEEE 32 bit floating point representation 
- * source: http://www.codeproject.com/Articles/69941/Best-Square-Root-Method-Algorithm-Function-Precisi
- */
-long double sqrt1(long double x)  
-{
-  const int steps = 20;
-
-  union
-  {
-    int i;
-    long double x;
-  } u;
-  u.x = x;
-  u.i = (1<<29) + (u.i >> 1) - (1<<22); 
-  
-
-  for (int j=0; j < steps; j++)
-  {
-    u.x =       u.x + x/u.x;
-    u.x = 0.25f*u.x + x/u.x;
-  }
-
-  return u.x;
-} 
-
-/*
  *	Function that computes the T-Table output for a plaintext-byte and a key candidate
  */
 unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candidate)
@@ -310,36 +281,34 @@ unsigned int get_TTable_Out(unsigned int plaintext_byte, unsigned int key_candid
 }
 
 
-__global__ void CorrCoefKernel(double *result, int *x, int *y, int first_col, int col, int row) //row = NUMBER_OF_TRACES, col = POINTS_PER_TRACE
+__global__ void CorrCoefKernel(double *result, int *x, int *y, int first_col) //row = NUMBER_OF_TRACES, col = POINTS_PER_TRACE
 {
     int i = threadIdx.x + first_col;
-    //result[i] = -1;
-   // return;
     
     _Uint32t sum_x  = 0;
 	   _Uint32t sum_y  = 0;
 
-	    for(int j = 0; j < row; j++)
+	    for(int j = 0; j < NUMBER_OF_TRACES; j++)
 	    {
-       sum_x  += x[i+j*col];
+       sum_x  += x[i+j*POINTS_PER_TRACE];
        sum_y  += y[j];
 	    }
 
-     long double x_average = sum_x/row;
-	    long double y_average = sum_y/row;
+     double x_average = sum_x/NUMBER_OF_TRACES;
+	    double y_average = sum_y/NUMBER_OF_TRACES;
 
-	    long double dividend = 0;
-	    long double divisor1 = 0;      
-	    long double divisor2 = 0;
+	    double dividend = 0;
+	    double divisor1 = 0;      
+	    double divisor2 = 0;
 
-     for(int j = 0; j < row; j++)
+     for(int j = 0; j < NUMBER_OF_TRACES; j++)
 	    {
-		    dividend += (x[i+j*col] - x_average)*(y[j] - y_average); 
-		    divisor1 += (x[i+j*col] - x_average)*(x[i+j*col] - x_average);  
+		    dividend += (x[i+j*POINTS_PER_TRACE] - x_average)*(y[j] - y_average); 
+		    divisor1 += (x[i+j*POINTS_PER_TRACE] - x_average)*(x[i+j*POINTS_PER_TRACE] - x_average);  
 		    divisor2 += (y[j] - y_average)*(y[j] - y_average); 
 	    }
 
-	    long double divisor = sqrt((double) divisor1)*sqrt((double) divisor2);  // PROBLEM: there is no cuda function sqrt(long double), just sqrt(double)
+	    double divisor = sqrt(divisor1)*sqrt(divisor2);
 
 	    if ((dividend == 0) || (divisor == 0))
 	    {
@@ -370,12 +339,6 @@ double get_Corr_Coef(int *x, int *y, int n)
 	long double dividend = 0;
 	long double divisor1 = 0;
 	long double divisor2 = 0;
- 	/*double x_average = sum_x/n;
-	double y_average = sum_y/n;
-
-	 double dividend = 0;
-	 double divisor1 = 0;
-	 double divisor2 = 0;*/
 
 	for(int i = 0; i < n; i++)
 	{
@@ -464,7 +427,7 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
 
 
     // Launch a kernel on the GPU with one thread for each tracepoint.
-    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT, POINTS_PER_TRACE, NUMBER_OF_TRACES);
+    CorrCoefKernel<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
@@ -506,71 +469,11 @@ Error:
 
 
 
-void printDevProp(cudaDeviceProp devProp)
-{
-    printf("Major revision number:         %d\n",  devProp.major);
-    printf("Minor revision number:         %d\n",  devProp.minor);
-    printf("Name:                          %s\n",  devProp.name);
-    printf("Total global memory:           %u\n",  devProp.totalGlobalMem);
-    printf("Total shared memory per block: %u\n",  devProp.sharedMemPerBlock);
-    printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
-    printf("Warp size:                     %d\n",  devProp.warpSize);
-    printf("Maximum memory pitch:          %u\n",  devProp.memPitch);
-    printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
-    for (int i = 0; i < 3; ++i)
-    printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
-    for (int i = 0; i < 3; ++i)
-    printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
-    printf("Clock rate:                    %d\n",  devProp.clockRate);
-    printf("Total constant memory:         %u\n",  devProp.totalConstMem);
-    printf("Texture alignment:             %u\n",  devProp.textureAlignment);
-    printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
-    printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
-    printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
-    return;
-}
-
-void printDevInfos()
-{
-  // Number of CUDA devices
-    int devCount;
-    cudaGetDeviceCount(&devCount);
-    printf("CUDA Device Query...\n");
-    printf("There are %d CUDA devices.\n", devCount);
- 
-    // Iterate through devices
-    for (int i = 0; i < devCount; ++i)
-    {
-        // Get device properties
-        printf("\nCUDA Device #%d\n", i);
-        cudaDeviceProp devProp;
-        cudaGetDeviceProperties(&devProp, i);
-        printDevProp(devProp);
-    }
- 
-    printf("\nPress any key to exit...");
-    char c;
-    scanf("%c", &c);
-}
-
-
-
 int main()
 {
 // #################### OWN PROGRAM #####################
 	
   //printDevInfos();
-  /* cout << setprecision(30);*/
-  ///*cout << "sqrt of 20 = " << sqrt_long_double(20) << endl;*/
-  //cout << "sqrt1(20) = " << sqrt1(20) << endl;
-  //cout << "sqrt (long double 20) = " << sqrt ((long double) 20) << endl;
-  //cout << "sqrt (20) = " << sqrt (20) << endl;
-
- /* cout << "sqrt(20) - sqrt1(20) = " << sqrt((long double) 20) - sqrt1(20) << endl;
-  if ( sqrt((long double) 20) - sqrt1(20) != 0)
-    cout << "bigger" << endl;
-  else
-    cout << "equal" << endl;*/
 
 	// Start measuring time
 	const clock_t begin_time = clock();
@@ -655,8 +558,6 @@ int main()
 		for (int key_candidate = 0; key_candidate <= 255; key_candidate++)
 		{   
 			// Measure hamming weight for every trace
-    //if (key_candidate == 95)
-    //    int xyz = 01;
 			for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
 			{
 				// Calculate the hamming weight
@@ -665,34 +566,33 @@ int main()
 			}
 	 
 			// Calculate Correlation Coefficient 
-
+#ifdef GPU
    cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw);;
         if (cudaStatus != cudaSuccess) {
             fprintf(stderr, "computeCoeffWithCuda failed!");
             return 1;
    }
-
+#endif
 			for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
-   /*for (int trace_point = 0; trace_point < TRACE_ENDPOINT-TRACE_STARTPOINT; trace_point++)*/
 			{
+#ifdef CPU
 				// Create "Slice" of Traces at certain point
-				/*int *traces_at_trace_point;
+				int *traces_at_trace_point;
 				traces_at_trace_point = new int [NUMBER_OF_TRACES];
 			
 				for (int t = 0; t < NUMBER_OF_TRACES; t++)
 				{
 					traces_at_trace_point[t] = traces[trace_point+t*NUMBER_OF_TRACES];
-				}*/
+				}
 
 				// Correlation Coefficient 
-				/*cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
+				cc = get_Corr_Coef(traces_at_trace_point, hw, NUMBER_OF_TRACES);
 
-				delete[] traces_at_trace_point;*/
-
+				delete[] traces_at_trace_point;
+#endif
+#ifdef GPU
      cc = corr[key_candidate][trace_point-TRACE_STARTPOINT];
-     //if ( cc == -5 )
-      // cout << "cc = " << cc << endl;
-
+#endif
 				if(cc > highest_cc)
 				{
 					highest_cc = cc;
@@ -759,114 +659,5 @@ int main()
 	// Stop measuring time
 	std::cout << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
 
-
-// #################### OLD SAMPLE STUFF #####################
-
-//	const int arraySize = 5;
-//	const int a[arraySize] = { 1, 2, 3, 4, 5 };
-//	const int b[arraySize] = { 10, 20, 30, 40, 50 };
-//	int c[arraySize] = { 0 };
-//
-//	// Add vectors in parallel.
-//	cudaError_t cudaStatus = addWithCuda(c, a, b, arraySize);
-//	if (cudaStatus != cudaSuccess) {
-//	fprintf(stderr, "addWithCuda failed!");
-//	return 1;
-//	}
-//
-//	printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-//	c[0], c[1], c[2], c[3], c[4]);
-//
-//	// cudaDeviceReset must be called before exiting in order for profiling and
-//	// tracing tools such as Nsight and Visual Profiler to show complete traces.
-//	cudaStatus = cudaDeviceReset();
-//	if (cudaStatus != cudaSuccess) {
-//	fprintf(stderr, "cudaDeviceReset failed!");
-//	return 1;
-//}
-
 return 0;
-}
-
-
-// #################### OLD SAMPLE STUFF #####################
-
-// Helper function for using CUDA to add vectors in parallel.
-cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-{
-    int *dev_a = 0;
-    int *dev_b = 0;
-    int *dev_c = 0;
-    cudaError_t cudaStatus;
-
-    // Choose which GPU to run on, change this on a multi-GPU system.
-    cudaStatus = cudaSetDevice(0);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-        goto Error;
-    }
-
-    // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMalloc failed!");
-        goto Error;
-    }
-
-    // Copy input vectors from host memory to GPU buffers.
-    cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-    // Launch a kernel on the GPU with one thread for each element.
-    addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-
-    // Check for any errors launching the kernel
-    cudaStatus = cudaGetLastError();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-        goto Error;
-    }
-    
-    // cudaDeviceSynchronize waits for the kernel to finish, and returns
-    // any errors encountered during the launch.
-    cudaStatus = cudaDeviceSynchronize();
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-        goto Error;
-    }
-
-    // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-    if (cudaStatus != cudaSuccess) {
-        fprintf(stderr, "cudaMemcpy failed!");
-        goto Error;
-    }
-
-Error:
-    cudaFree(dev_c);
-    cudaFree(dev_a);
-    cudaFree(dev_b);
-    
-    return cudaStatus;
 }
