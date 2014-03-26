@@ -672,6 +672,7 @@ int main()
 
 
 	// deleting everything
+ std::cout << "GPU not reseted yet, Time: " << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
 
  cudaError_t cudaStatus = cudaDeviceReset();
 	if (cudaStatus != cudaSuccess) {
