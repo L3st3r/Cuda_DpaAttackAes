@@ -13,8 +13,7 @@ using namespace std;
 */
 #define GPU             // {CPU, GPU}
 #define NAIVE           // {NAIVE, SHARED}  SHARED funktioniert noch nicht
-#define HW_SL           // {HW_SL, HW_PL}
-#define HW_PL
+#define HW_PL           // {HW_SL, HW_PL}
 
 #define NUMBER_OF_TRACES 10000
 #define POINTS_PER_TRACE 10000
