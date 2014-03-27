@@ -40,8 +40,6 @@ cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces, int *hw);
 
 // #################### CURRENTLY UNUSED FUNCTIONS #####################
 
-
-
 void printDevProp(cudaDeviceProp devProp)
 {
     printf("Major revision number:         %d\n",  devProp.major);
@@ -89,63 +87,6 @@ void printDevInfos()
     scanf("%c", &c);
 }
 
-//-- dynamic 2d arrays with contiguously stored data
-// copied from https://devtalk.nvidia.com/
-template <class T> class array2d
-{
-    T *data;
-    size_t R, C;
-
-public:
-    array2d (size_t row, size_t col)
-    {
-        data = new T [row*col];
-        R = row;
-        C = col;
-    }
-
-    T* operator[] (size_t row) { return &(data[row*C]);	}
-    T* operator& () { return &(data[0]); }
-    ~array2d () { delete [] data; }
-};
-
-/*
-*	Function to read in values of traces
-*/
-void read_traces_array(array2d<int> traces_array, string filename) {
-    streampos size;
-    char * memblock;
-
-    ifstream file (filename, ios::in|ios::binary|ios::ate);
-    if (file.is_open())
-    {
-        size = file.tellg();
-        memblock = new char [size];
-        file.seekg (0, ios::beg);
-        file.read (memblock, size);
-        file.close();
-
-        cout << "Content of file " << filename << " is in memory." << endl;   
-    }
-    else
-    {
-        cout << "Unable to open file" << filename << endl;
-        return;
-    }
-
-    for (int i = 0; i < NUMBER_OF_TRACES; i++)
-    {
-        for (int j = 0; j < POINTS_PER_TRACE; j++)
-        {
-            //traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
-            traces_array[j][i] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);   // easier this way, so we don't need the array traces_at_tracepoint
-            //cout << static_cast<int>(memblock[i]);
-        }
-    }
-    delete[] memblock;
-}
-
-#
 
 // #################### ACTUAL PROGRAM #####################
 
@@ -178,15 +119,6 @@ void read_traces(int *traces, string filename) {
         traces[i] = static_cast<int>(memblock[i]);   // easier this way, so we don't need the array traces_at_tracepoint
     }
 
-    //for (int i = 0; i < NUMBER_OF_TRACES; i++)
-    //{
-    // for (int j = 0; j < POINTS_PER_TRACE; j++)
-    // {
-    //   //traces[i][j] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);
-    //   traces[j][i] = static_cast<int>(memblock[i*POINTS_PER_TRACE + j]);   // easier this way, so we don't need the array traces_at_tracepoint
-    //   //cout << static_cast<int>(memblock[i]);
-    // }
-    //}
     delete[] memblock;
 }
 
@@ -342,7 +274,7 @@ __global__ void getHwKernel(int *hw, int *plaintext)
 /*
 *	First kernel for computation of the Pearson Correlation Coefficient
 */
-__global__ void CorrCoefKernel_Naiv(double *result, int *x, int *y, int first_col) //row = NUMBER_OF_TRACES, col = POINTS_PER_TRACE
+__global__ void CorrCoefKernel_Naiv(double *result, int *x, int *y, int first_col)
 {
     int i = threadIdx.x + first_col;
 
@@ -383,9 +315,8 @@ __global__ void CorrCoefKernel_Naiv(double *result, int *x, int *y, int first_co
 /*
 *	Unrolled kernel for computation of the Pearson Correlation Coefficient
 */
-__global__ void CorrCoefKernel_Unrolled(double *result, int *x, int *y, int first_col) //row = NUMBER_OF_TRACES, col = POINTS_PER_TRACE
-{    // first_col = TRACE_STARTPOINT     (dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
-
+__global__ void CorrCoefKernel_Unrolled(double *result, int *x, int *y)
+{ 
     int trace_point = blockIdx.x;   //gridDim.x = (TRACE_ENDPOINT-TRACE_STARTPOINT)
     int key_candidate = threadIdx.x; //blockDim.x = NUMBER_OF_KEY_CANDIDATES
 
@@ -465,7 +396,6 @@ double get_Corr_Coef(int *x, int *y, int n)
 }
 
 
-
 // Helper function for using CUDA to calculate Hamming Weight in parallel.
 cudaError_t getHwWithCuda(int *hw, int *plaintext)
 {
@@ -479,9 +409,6 @@ cudaError_t getHwWithCuda(int *hw, int *plaintext)
         fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
         goto Error;
     }
-
-    // Start measuring time
-    //const clock_t begin_time_mal = clock();
 
     // Allocate GPU buffers for three vectors (two input, one output)    .
     cudaStatus = cudaMalloc((void**)&dev_hw, NUMBER_OF_TRACES * NUMBER_OF_KEY_CANDIDATES * sizeof(int));
@@ -504,7 +431,7 @@ cudaError_t getHwWithCuda(int *hw, int *plaintext)
     }
 
     // Launch a kernel on the GPU with one thread for each element.
-    getHwKernel<<<2500, 1024>>>(dev_hw, dev_plaintext);
+    getHwKernel<<<ceil(NUMBER_OF_TRACES*NUMBER_OF_KEY_CANDIDATES/1024), 1024>>>(dev_hw, dev_plaintext);
 
     // Check for any errors launching the kernel
     cudaStatus = cudaGetLastError();
@@ -613,7 +540,6 @@ Error:
     cudaFree(dev_hw);
     cudaFree(dev_traces);
 
-
     return cudaStatus;
 }
 
@@ -666,7 +592,7 @@ cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces_at_trace_point
     }
 
     // Launch a kernel on the GPU with one thread for each tracepoint and each key candidate: #Threads = (TRACE_ENDPOINT-TRACE_STARTPOINT) * NUMBER_OF_KEY_CANDIDATES
-    CorrCoefKernel_Unrolled<<<(TRACE_ENDPOINT-TRACE_STARTPOINT), NUMBER_OF_KEY_CANDIDATES>>>(dev_cc, dev_traces_at_tp, dev_hw, TRACE_STARTPOINT);
+    CorrCoefKernel_Unrolled<<<(TRACE_ENDPOINT-TRACE_STARTPOINT), NUMBER_OF_KEY_CANDIDATES>>>(dev_cc, dev_traces_at_tp, dev_hw);
 
     // Check for any errors launching the kernel
     cudaStatus = cudaGetLastError();
@@ -699,29 +625,17 @@ Error:
 }
 
 
-
 int main()
 {
-    // #################### OWN PROGRAM #####################
-
-    //printDevInfos();
 
     // Start measuring time
     const clock_t begin_time = clock();
 
-    // Initialize trace array
-    //array2d<int> traces_array(POINTS_PER_TRACE,NUMBER_OF_TRACES);
-
     int *traces;
     traces = new int [POINTS_PER_TRACE*NUMBER_OF_TRACES];
-    //for (int i = 0; i < POINTS_PER_TRACE; i++)
-    //{
-    //	traces[i] = new int[NUMBER_OF_TRACES];
-    //}
 
     //// Read traces and store in array
     read_traces(traces, TRACE_FILE);
-    //read_traces_array(traces_array, TRACE_FILE);
 
 #ifdef PARALLEL2
     int *traces_at_trace_point = new int [NUMBER_OF_TRACES*(TRACE_ENDPOINT-TRACE_STARTPOINT)];
@@ -729,24 +643,9 @@ int main()
         for (int j=0; j<NUMBER_OF_TRACES; j++)
             traces_at_trace_point[(trace_point-TRACE_STARTPOINT)*NUMBER_OF_TRACES+j] = traces[trace_point+j*POINTS_PER_TRACE];
 #endif
-    //int *dev_traces = 0;
-    //cudaError_t cudaStatus;
-
-    //    cudaStatus = cudaMalloc((void**)&dev_traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int));
-    //   if (cudaStatus != cudaSuccess) {
-    //       fprintf(stderr, "cudaMalloc failed!");
-    //       return 1;
-    //   }
-
-    //    cudaStatus = cudaMemcpy(dev_traces, traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int), cudaMemcpyHostToDevice);
-    //   if (cudaStatus != cudaSuccess) {
-    //       fprintf(stderr, "cudaMemcpy failed!");
-    //       return 1;
-    //   }
 
     // Stop measuring time
     std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
-
 
     // Start measuring time
     const clock_t begin_time_plaintexts = clock();
@@ -778,7 +677,7 @@ int main()
     key = new int [BYTES_PER_KEY];
 
 #ifdef PARALLEL1
-    // Initialize corr array (event. doch nicht nötig)
+    // Initialize corr array
     double **corr;
     corr = new double *[NUMBER_OF_KEY_CANDIDATES];
     for (int i = 0; i < NUMBER_OF_KEY_CANDIDATES; i++)
@@ -846,7 +745,7 @@ int main()
         {   
 #if !defined PARALLEL2
             // Start measuring time
-            const clock_t begin_time_hw2 = clock();
+            /*const clock_t begin_time_hw2 = clock();*/
 
             // Measure hamming weight for every trace
             for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
@@ -858,18 +757,14 @@ int main()
                 /*if(hw_sl[trace] != hw_pl[key_candidate*NUMBER_OF_TRACES + trace])
                 std::cout << "Error (HW)!! " << hw_sl[trace] << " vs " << hw_pl[key_candidate*NUMBER_OF_TRACES + trace] << endl;*/
             }
-#endif
-            // +++ PM End +++
-
             // Stop measuring time
-            //std::cout << "HW seriell:       " << float( clock () - begin_time_hw2 ) /  CLOCKS_PER_SEC << "sec" << endl;
+            /*std::cout << "HW seriell:       " << float( clock () - begin_time_hw2 ) /  CLOCKS_PER_SEC << "sec" << endl;*/
+#endif
 
 
             // Calculate Correlation Coefficient
 #ifdef PARALLEL1
             cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw_sl);
-
-            /*cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw_pl);*/
 
             if (cudaStatus != cudaSuccess) {
                 fprintf(stderr, "computeCoeffWithCuda failed!");
@@ -891,8 +786,6 @@ int main()
                 // Correlation Coefficient 
                 cc = get_Corr_Coef(traces_at_trace_point, hw_sl, NUMBER_OF_TRACES);
 
-                /*cc = get_Corr_Coef(traces_at_trace_point, hw_pl, NUMBER_OF_TRACES);*/
-
                 delete[] traces_at_trace_point;
 #endif
 #ifdef PARALLEL1
@@ -906,15 +799,10 @@ int main()
                 {
                     highest_cc = cc;
                     key[key_byte] = key_candidate;
-                    //highest_trace_point = trace_point;
-                    /*cout << "Highest CC = " << highest_cc << ", Key Candidate = " << key_candidate << endl;*/
                 }
             }
         }
         highest_cc = -1.0;
-
-        // Stop measuring time
-        /*std::cout << " HW seriell:   " << float( clock () - begin_time_hw_sl ) /  CLOCKS_PER_SEC << "sec" << endl;*/
     } 
 
     cout << "CIPHER KEY =";
@@ -925,18 +813,11 @@ int main()
     cout << endl;
 
     // deleting everything
-    /*std::cout << "GPU not reseted yet, Time: " << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;*/
 
-    /*for (int i = 0; i < NUMBER_OF_TRACES; i++)
-    {
-    delete[] traces[i];
-    }*/
     for (int i = 0; i < NUMBER_OF_TEXTS; i++)
     {
         delete[] plaintexts[i];
     }
-    /*delete[] traces;*/
-    //traces_array.~array2d();
     delete[] traces;
     delete[] plaintexts;
     delete[] key;
@@ -964,18 +845,11 @@ int main()
     }
 #endif
 
-    // cudaDeviceReset must be called before exiting in order for profiling and
-    // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    /*cudaStatus = cudaDeviceReset();
-    if (cudaStatus != cudaSuccess) {
-    fprintf(stderr, "cudaDeviceReset failed!");
-    return 1;*/
-
     // 	CORRECT CIPHER KEY: 2b  7e  15  16  28  ae  d2  a6  ab  f7  15  88  09  cf  4f  3c
     //                 dec: 043 126 021 022 040 174 210 166 171 247 021 136 009 207 079 060		 
 
     // Stop measuring time
-    std::cout << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
+    std::cout << "Calculation took " << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
 
     return 0;
 }
