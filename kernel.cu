@@ -12,7 +12,7 @@ using namespace std;
 *  Global Configuration
 */
 #define PARALLEL2          // {SERIAL, PARALLEL1, PARALLEL2}
-#define TIME
+#define TIME            // measures time
 
 #define NUMBER_OF_TRACES 10000
 #define POINTS_PER_TRACE 10000
@@ -106,11 +106,11 @@ void read_traces(int *traces, string filename) {
         file.read (memblock, size);
         file.close();
 
-        cout << "Content of file " << filename << " is in memory." << endl;   
+        std::cout << "Content of file " << filename << " is in memory." << endl;   
     }
     else
     {
-        cout << "Unable to open file" << filename << endl;
+        std::cout << "Unable to open file" << filename << endl;
         return;
     }
 
@@ -139,11 +139,11 @@ void read_texts(unsigned _int8 **texts, string filename) {
         file.read (memblock, size);
         file.close();
 
-        cout << "Content of file " << filename << " is in memory." << endl;    
+        std::cout << "Content of file " << filename << " is in memory." << endl;    
     }
     else
     {
-        cout << "Unable to open file " << filename << endl;
+        std::cout << "Unable to open file " << filename << endl;
         return;
     }
 
@@ -627,9 +627,20 @@ Error:
 
 int main()
 {
-
+#ifdef TIME
     // Start measuring time
     const clock_t begin_time = clock();
+#ifdef SERIAL
+    float t_hw_serial = 0.0;
+    float t_cc_serial = 0.0;
+#elif defined PARALLEL1
+    float t_hw_serial = 0.0;
+    float t_cc_parallel1 = 0.0;
+#elif defined PARALLEL2
+    float t_hw_parallel = 0.0;
+    float t_cc_parallel2 = 0.0;
+#endif
+#endif
 
     int *traces;
     traces = new int [POINTS_PER_TRACE*NUMBER_OF_TRACES];
@@ -643,13 +654,13 @@ int main()
         for (int j=0; j<NUMBER_OF_TRACES; j++)
             traces_at_trace_point[(trace_point-TRACE_STARTPOINT)*NUMBER_OF_TRACES+j] = traces[trace_point+j*POINTS_PER_TRACE];
 #endif
-
+#ifdef TIME
     // Stop measuring time
     std::cout << float( clock () - begin_time ) /  CLOCKS_PER_SEC << "sec" << endl;
 
     // Start measuring time
     const clock_t begin_time_plaintexts = clock();
-
+#endif
     // Initialize plaintext array
     unsigned _int8 **plaintexts;
     plaintexts = new unsigned _int8 *[NUMBER_OF_TEXTS];
@@ -661,13 +672,14 @@ int main()
     // Read plaintexts and store in array
     read_texts(plaintexts, PLAINTEXT_FILE);
 
+#ifdef TIME
     // Stop measuring time
     std::cout << float( clock () - begin_time_plaintexts ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 
     // Start measuring time
     const clock_t begin_time_calculation = clock();
-
+#endif
 #if !defined PARALLEL2
     int *hw_sl;
     hw_sl = new int [NUMBER_OF_TRACES];
@@ -686,19 +698,24 @@ int main()
     }
 #endif
 
+#ifdef TIME
+    // Start measuring time
+        const clock_t begin_time_hw_sl = clock();
+#endif
     // Loop through all key bytes
     for (int key_byte = 0; key_byte < BYTES_PER_KEY; key_byte++)
     {
-        cout << "Compute key byte " << key_byte << " ..." << endl;
+        std::cout << "Compute key byte " << key_byte << " ..." << endl;
 
         double highest_cc = -1.0;
         double cc = -1.0;
 
         // ################# HW PARALLEL ######################
 #ifdef PARALLEL2
+#ifdef TIME
         // Start measuring time
         const clock_t begin_time_hw_pl = clock();
-
+#endif
         int *hw_pl;
         hw_pl = new int [NUMBER_OF_TRACES * NUMBER_OF_KEY_CANDIDATES];
 
@@ -717,11 +734,12 @@ int main()
             return 1;
         }
 
+#ifdef TIME
         // Stop measuring time
-        std::cout << " HW parallel:  " << float( clock () - begin_time_hw_pl ) /  CLOCKS_PER_SEC << "sec" << endl;
-
+        /*std::cout << " HW parallel:  " << float( clock () - begin_time_hw_pl ) /  CLOCKS_PER_SEC << "sec" << endl;*/
+        t_hw_parallel += float( clock () - begin_time_hw_pl ) / CLOCKS_PER_SEC;
         const clock_t begin_time_coeff_parallel2 = clock();
-
+#endif
         // Calculate Correlation Coefficient in parallel
         double *corr_unrolled = new double [NUMBER_OF_KEY_CANDIDATES *  (TRACE_ENDPOINT - TRACE_STARTPOINT)];
         cudaError_t cudaStatus = computeCoeffWithCuda_Unrolled(corr_unrolled, traces_at_trace_point, hw_pl);
@@ -729,24 +747,24 @@ int main()
             fprintf(stderr, "computeCoeffWithCuda_Unrolled failed!");
             return 1;
         }
-        std::cout << " Coeff parallel unrolled:  " << float( clock () - begin_time_coeff_parallel2 ) /  CLOCKS_PER_SEC << "sec" << endl;
-
+        /*std::cout << " Coeff parallel unrolled:  " << float( clock () - begin_time_coeff_parallel2 ) /  CLOCKS_PER_SEC << "sec" << endl;*/
+#ifdef TIME
+        t_cc_parallel2 += float( clock () - begin_time_coeff_parallel2 ) / CLOCKS_PER_SEC;
+#endif
         delete[] hw_pl;
 #endif
 
 
         // ##################### HW SERIELL #####################
 
-        // Start measuring time
-        const clock_t begin_time_hw_sl = clock();
-
         // Loop through all key candidates
         for (int key_candidate = 0; key_candidate < NUMBER_OF_KEY_CANDIDATES; key_candidate++)
         {   
 #if !defined PARALLEL2
+#ifdef TIME
             // Start measuring time
-            /*const clock_t begin_time_hw2 = clock();*/
-
+            const clock_t begin_time_hw2 = clock();
+#endif
             // Measure hamming weight for every trace
             for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
             {
@@ -757,24 +775,36 @@ int main()
                 /*if(hw_sl[trace] != hw_pl[key_candidate*NUMBER_OF_TRACES + trace])
                 std::cout << "Error (HW)!! " << hw_sl[trace] << " vs " << hw_pl[key_candidate*NUMBER_OF_TRACES + trace] << endl;*/
             }
-            // Stop measuring time
-            /*std::cout << "HW seriell:       " << float( clock () - begin_time_hw2 ) /  CLOCKS_PER_SEC << "sec" << endl;*/
+#ifdef TIME
+            t_hw_serial += float( clock() - begin_time_hw2 ) / CLOCKS_PER_SEC;
+#endif
 #endif
 
 
             // Calculate Correlation Coefficient
 #ifdef PARALLEL1
+#ifdef TIME
+            // Start measuring time
+            const clock_t begin_time_cc_p1 = clock();
+#endif
             cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw_sl);
 
             if (cudaStatus != cudaSuccess) {
                 fprintf(stderr, "computeCoeffWithCuda failed!");
                 return 1;
             }
+#ifdef TIME
+            t_cc_parallel1 += float( clock() - begin_time_cc_p1 ) / CLOCKS_PER_SEC;
+#endif
 #endif
             for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
             {
 #ifdef SERIAL
-                // Create "Slice" of Traces at certain point
+#ifdef TIME
+            // Start measuring time
+            const clock_t begin_time_cc_serial = clock();
+#endif
+                //// Create "Slice" of Traces at certain point
                 int *traces_at_trace_point;
                 traces_at_trace_point = new int [NUMBER_OF_TRACES];
 
@@ -785,7 +815,9 @@ int main()
 
                 // Correlation Coefficient 
                 cc = get_Corr_Coef(traces_at_trace_point, hw_sl, NUMBER_OF_TRACES);
-
+#ifdef TIME
+                t_cc_serial += float( clock() - begin_time_cc_serial ) / CLOCKS_PER_SEC;
+#endif
                 delete[] traces_at_trace_point;
 #endif
 #ifdef PARALLEL1
@@ -802,15 +834,17 @@ int main()
                 }
             }
         }
-        highest_cc = -1.0;
+        highest_cc = -1.0;     
     } 
+    // Stop measuring time
+    /*std::cout << "HW seriell:       " << float( clock () - begin_time_hw_sl ) /  CLOCKS_PER_SEC << "sec" << endl;*/
 
-    cout << "CIPHER KEY =";
+    std::cout << "CIPHER KEY =";
     for(int i = 0; i < BYTES_PER_KEY; i++)
     {
-        cout << hex << " " << key[i];
+        std::cout << hex << " " << key[i];
     }
-    cout << endl;
+    std::cout << endl;
 
     // deleting everything
 
@@ -848,8 +882,21 @@ int main()
     // 	CORRECT CIPHER KEY: 2b  7e  15  16  28  ae  d2  a6  ab  f7  15  88  09  cf  4f  3c
     //                 dec: 043 126 021 022 040 174 210 166 171 247 021 136 009 207 079 060		 
 
-    // Stop measuring time
-    std::cout << "Calculation took " << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
+    // Output of runtimes, when TIME is defined
+#ifdef TIME
+    std::cout << "Runtime: " << endl;
+#ifdef SERIAL
+    std::cout << "computation of HW: " << t_hw_serial << "sec" << endl << "computation of cc: " << t_cc_serial << "sec" << endl ;
+#endif
+#ifdef PARALLEL1
+    std::cout << "computation of HW: " << t_hw_serial << "sec" << endl << "computation of cc: " << t_cc_parallel1 << "sec" << endl ;
+#endif
+#ifdef PARALLEL2
+    std::cout << "computation of HW: " << t_hw_parallel << "sec" << endl << "computation of cc: " << t_cc_parallel2 << "sec" << endl ;
+#endif
+    std::cout << "in total: " << float( clock () - begin_time_calculation ) /  CLOCKS_PER_SEC << "sec" << endl;
+#endif
 
+    std::cout << "" << endl;
     return 0;
 }
