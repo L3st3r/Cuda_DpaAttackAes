@@ -435,8 +435,8 @@ __global__ void CorrCoefKernel_Unrolled(double *result, int *x, int *y, int firs
     /*int i = threadIdx.x + first_col;*/
     //int idx = blockDim.x*blockIdx.x + threadIdx.x;  // i = {0, ..., (TRACE_ENDPOINT-TRACE_STARTPOINT) * NUMBER_OF_KEY_CANDIDATES -1}
 
-    int trace_point = blockIdx.x;   //blockDim.x = (TRACE_ENDPOINT-TRACE_STARTPOINT)
-    int key_candidate = threadIdx.x;
+    int trace_point = blockIdx.x;   //gridDim.x = (TRACE_ENDPOINT-TRACE_STARTPOINT)
+    int key_candidate = threadIdx.x; //blockDim.x = NUMBER_OF_KEY_CANDIDATES
 
     _Uint32t sum_x  = 0;
     _Uint32t sum_y  = 0;
@@ -663,12 +663,10 @@ cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw)
 
 
     // Launch a kernel on the GPU with one thread for each tracepoint.
-#ifdef NAIVE
     CorrCoefKernel_Naiv<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
-#endif
-#ifdef SHARED
-    CorrCoefKernel_SharedMem<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
-#endif
+
+    //CorrCoefKernel_SharedMem<<<1, TRACE_ENDPOINT-TRACE_STARTPOINT>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
+
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
     // Check for any errors launching the kernel
@@ -780,7 +778,7 @@ cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces, int *hw)
     int numberOfThreads = (TRACE_ENDPOINT-TRACE_STARTPOINT) * NUMBER_OF_KEY_CANDIDATES;
     //dim3 threadsPerBlock(ceil(NUMBER_OF_KEY_CANDIDATES/32), 32);       // 8*32=256 = NUMBER_OF_KEY_CANDIDATES -> we get complete warps
     //dim3 numBlocks(numberOfThreads / (threadsPerBlock.x*threadsPerBlock.y), 1);
-    CorrCoefKernel_Unrolled<<<ceil(numberOfThreads/NUMBER_OF_KEY_CANDIDATES), NUMBER_OF_KEY_CANDIDATES>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
+    CorrCoefKernel_Unrolled<<<(TRACE_ENDPOINT-TRACE_STARTPOINT), NUMBER_OF_KEY_CANDIDATES>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
 
     //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
 
@@ -1017,7 +1015,7 @@ int main()
 #endif
 
 #ifdef PARALLEL2
-                cc = corr_unrolled[key_candidate * (TRACE_ENDPOINT - TRACE_STARTPOINT) + trace_point];
+                cc = corr_unrolled[key_candidate * (TRACE_ENDPOINT - TRACE_STARTPOINT) + trace_point - TRACE_STARTPOINT];
 #endif
                 if(cc > highest_cc)
                 {
