@@ -11,15 +11,13 @@ using namespace std;
 /*
 *  Global Configuration
 */
-#define GPU             // {CPU, GPU}
-#define NAIVE           // {NAIVE, SHARED}  SHARED funktioniert noch nicht
-#define HW_PL           // {HW_SL, HW_PL}
+#define PARALLEL2          // {SERIAL, PARALLEL1, PARALLEL2}
 
 #define NUMBER_OF_TRACES 10000
 #define POINTS_PER_TRACE 10000
 #define NUMBER_OF_TEXTS 10000
 #define BYTES_PER_TEXT 16     // fix for AES
-#define BYTES_PER_KEY 1       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
+#define BYTES_PER_KEY 16       // possible values for AES are 16, 24 and 32 (128, 192 or 256 bits)
 #define NUMBER_OF_KEY_CANDIDATES 256
 
 #define TRACE_STARTPOINT 550
@@ -38,6 +36,8 @@ dec: 043 126 021 022 040 174 210 166 171 247 021 136 009 207 079 060
 */
 
 cudaError_t getHwWithCuda(int *hw, int *plaintext);
+cudaError_t computeCoeffWithCuda(double *cc, int *traces, int *hw);
+cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces, int *hw);
 
 // #################### CURRENTLY UNUSED FUNCTIONS #####################
 
@@ -338,43 +338,6 @@ __global__ void getHwKernel(int *hw, int *plaintext, int *n)
         hw[idx] += (b & 1);
         b >>= 1;
     }
-
-    /* Loop Unrolling: 
-    does not provide any speed advantage compared to while()-loop 
-    (because of Compiler optimizations probably)
-    hw[idx] = (b & 1); b >>= 1;  //0
-    hw[idx] += (b & 1); b >>= 1; //1
-    hw[idx] += (b & 1); b >>= 1; //2
-    hw[idx] += (b & 1); b >>= 1; //3
-    hw[idx] += (b & 1); b >>= 1; //4
-    hw[idx] += (b & 1); b >>= 1; //5
-    hw[idx] += (b & 1); b >>= 1; //6
-    hw[idx] += (b & 1); b >>= 1; //7
-    hw[idx] += (b & 1); b >>= 1; //8
-    hw[idx] += (b & 1); b >>= 1; //9
-    hw[idx] += (b & 1); b >>= 1; //10
-    hw[idx] += (b & 1); b >>= 1; //11
-    hw[idx] += (b & 1); b >>= 1; //12
-    hw[idx] += (b & 1); b >>= 1; //13
-    hw[idx] += (b & 1); b >>= 1; //14
-    hw[idx] += (b & 1); b >>= 1; //15
-    hw[idx] += (b & 1); b >>= 1; //16
-    hw[idx] += (b & 1); b >>= 1; //17
-    hw[idx] += (b & 1); b >>= 1; //18
-    hw[idx] += (b & 1); b >>= 1; //19
-    hw[idx] += (b & 1); b >>= 1; //20
-    hw[idx] += (b & 1); b >>= 1; //21
-    hw[idx] += (b & 1); b >>= 1; //22
-    hw[idx] += (b & 1); b >>= 1; //23
-    hw[idx] += (b & 1); b >>= 1; //24
-    hw[idx] += (b & 1); b >>= 1; //25
-    hw[idx] += (b & 1); b >>= 1; //26
-    hw[idx] += (b & 1); b >>= 1; //27
-    hw[idx] += (b & 1); b >>= 1; //28
-    hw[idx] += (b & 1); b >>= 1; //29
-    hw[idx] += (b & 1); b >>= 1; //30
-    hw[idx] += (b & 1); b >>= 1; //31
-    */
 }
 
 /*
@@ -463,6 +426,52 @@ __global__ void CorrCoefKernel_SharedMem(double *result, int *x, int *y, int fir
     }		
 }
 
+
+/*
+*	Unrolled kernel for computation of the Pearson Correlation Coefficient
+*/
+__global__ void CorrCoefKernel_Unrolled(double *result, int *x, int *y, int first_col) //row = NUMBER_OF_TRACES, col = POINTS_PER_TRACE
+{    // first_col = TRACE_STARTPOINT     (dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
+    /*int i = threadIdx.x + first_col;*/
+    //int idx = blockDim.x*blockIdx.x + threadIdx.x;  // i = {0, ..., (TRACE_ENDPOINT-TRACE_STARTPOINT) * NUMBER_OF_KEY_CANDIDATES -1}
+
+    int trace_point = blockIdx.x;   //blockDim.x = (TRACE_ENDPOINT-TRACE_STARTPOINT)
+    int key_candidate = threadIdx.x;
+
+    _Uint32t sum_x  = 0;
+    _Uint32t sum_y  = 0;
+
+    for(int j = 0; j < NUMBER_OF_TRACES; j++)
+    {
+        sum_x  += x[trace_point+j*POINTS_PER_TRACE + first_col];
+        sum_y  += y[key_candidate*NUMBER_OF_TRACES + j];         //hw_sl[trace] = hw_pl[key_candidate*NUMBER_OF_TRACES + trace]
+    }
+
+    double x_average = sum_x/NUMBER_OF_TRACES;
+    double y_average = sum_y/NUMBER_OF_TRACES;
+
+    double dividend = 0;
+    double divisor1 = 0;      
+    double divisor2 = 0;
+
+    for(int j = 0; j < NUMBER_OF_TRACES; j++)
+    {
+        dividend += (x[trace_point+j*POINTS_PER_TRACE + first_col] - x_average)*(y[key_candidate*NUMBER_OF_TRACES + j] - y_average); 
+        divisor1 += (x[trace_point+j*POINTS_PER_TRACE + first_col] - x_average)*(x[trace_point+j*POINTS_PER_TRACE + first_col] - x_average);  
+        divisor2 += (y[key_candidate*NUMBER_OF_TRACES + j] - y_average)*(y[key_candidate*NUMBER_OF_TRACES + j] - y_average); 
+    }
+
+    double divisor = sqrt(divisor1)*sqrt(divisor2);
+
+    if ((dividend == 0) || (divisor == 0))
+    {
+        result[key_candidate *  (TRACE_ENDPOINT-TRACE_STARTPOINT)+ trace_point] = 0.0;
+    }else{
+        result[key_candidate *  (TRACE_ENDPOINT-TRACE_STARTPOINT)+ trace_point] = dividend/divisor;     // result = new int [NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT-TRACE_STARTPOINT)]
+    }		
+}
+
+
 /*
 * Function to calculate the Pearson Correlation Coefficient
 */
@@ -500,6 +509,8 @@ double get_Corr_Coef(int *x, int *y, int n)
         return dividend/divisor;
     }		
 }
+
+
 
 // Helper function for using CUDA to calculate Hamming Weight in parallel.
 cudaError_t getHwWithCuda(int *hw, int *plaintext)
@@ -696,6 +707,119 @@ Error:
     return cudaStatus;
 }
 
+// Helper function for computation of the correlation coefficient using CUDA.
+//cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
+cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces, int *hw)
+{//hw_sl[trace] != hw_pl[key_candidate*NUMBER_OF_TRACES + trace]
+    int *dev_traces = 0; 
+    int *dev_hw = 0;       // NUMBER_OF_TRACES * NUMBER_OF_KEY_CANDIDATES   
+    double *dev_cc = 0;    // NUMBER_OF_KEY_CANDIDATES * TRACE_ENDPOINT-TRACE_STARTPOINT
+    cudaError_t cudaStatus;
+    //size_t pitch;
+
+    /*dev_traces = traces;*/
+
+    // Choose which GPU to run on, change this on a multi-GPU system.
+    cudaStatus = cudaSetDevice(0);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
+        goto Error;
+    }
+
+    // Allocate GPU buffers for three vectors (two input, one output)    .
+    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(double));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMalloc((void**)&dev_hw, NUMBER_OF_KEY_CANDIDATES * NUMBER_OF_TRACES * sizeof(int));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMalloc((void**)&dev_traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int));
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMalloc failed!");
+        goto Error;
+    }
+
+
+    /*cudaStatus = cudaMallocPitch(&dev_traces, &pitch,
+    POINTS_PER_TRACE * sizeof(int), NUMBER_OF_TRACES);
+    if (cudaStatus != cudaSuccess) {
+    fprintf(stderr, "cudaMallocPitch failed!");
+    goto Error;
+    }*/
+
+
+    // Copy input vectors from host memory to GPU buffers.
+    cudaStatus = cudaMemcpy(dev_hw, hw, NUMBER_OF_KEY_CANDIDATES * NUMBER_OF_TRACES * sizeof(int), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+    cudaStatus = cudaMemcpy(dev_traces, traces, NUMBER_OF_TRACES * POINTS_PER_TRACE * sizeof(int), cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+
+    /*cudaStatus = cudaMemcpy2D(dev_traces, pitch, &traces_array, n * sizeof(int), n * sizeof(int), m, cudaMemcpyHostToDevice);
+    if (cudaStatus != cudaSuccess) {
+    fprintf(stderr, "cudaMemcpy2D failed!");
+    goto Error;
+    }*/
+
+
+    // Launch a kernel on the GPU with one thread for each tracepoint.
+    // #Threads = (TRACE_ENDPOINT-TRACE_STARTPOINT) * NUMBER_OF_KEY_CANDIDATES = 50 * 256 = 12800
+    int numberOfThreads = (TRACE_ENDPOINT-TRACE_STARTPOINT) * NUMBER_OF_KEY_CANDIDATES;
+    //dim3 threadsPerBlock(ceil(NUMBER_OF_KEY_CANDIDATES/32), 32);       // 8*32=256 = NUMBER_OF_KEY_CANDIDATES -> we get complete warps
+    //dim3 numBlocks(numberOfThreads / (threadsPerBlock.x*threadsPerBlock.y), 1);
+    CorrCoefKernel_Unrolled<<<ceil(numberOfThreads/NUMBER_OF_KEY_CANDIDATES), NUMBER_OF_KEY_CANDIDATES>>>(dev_cc, dev_traces, dev_hw, TRACE_STARTPOINT);
+
+    //addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
+
+    // Check for any errors launching the kernel
+    cudaStatus = cudaGetLastError();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "CorrCoefKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
+        goto Error;
+    }
+
+    // cudaDeviceSynchronize waits for the kernel to finish, and returns
+    // any errors encountered during the launch.
+    cudaStatus = cudaDeviceSynchronize();
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching CorrCoefKernel!\n", cudaStatus);
+        goto Error;
+    }
+
+    // Copy output vector from GPU buffer to host memory.
+    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(double), cudaMemcpyDeviceToHost);
+    if (cudaStatus != cudaSuccess) {
+        fprintf(stderr, "cudaMemcpy failed!");
+        goto Error;
+    }
+
+Error:
+    cudaFree(dev_cc);
+    cudaFree(dev_hw);
+
+    //for (int p = 0; p < POINTS_PER_TRACE; p++)
+    //{
+    //   cudaFree(dev_traces[p]);
+    //}
+    cudaFree(dev_traces);
+
+
+    return cudaStatus;
+}
+
 
 
 int main()
@@ -761,7 +885,7 @@ int main()
     // Start measuring time
     const clock_t begin_time_calculation = clock();
 
-#ifdef HW_SL
+#if !defined PARALLEL2
     int *hw_sl;
     hw_sl = new int [NUMBER_OF_TRACES];
 #endif
@@ -769,13 +893,15 @@ int main()
     int *key;
     key = new int [BYTES_PER_KEY];
 
+#ifdef PARALLEL1
     // Initialize corr array (event. doch nicht nötig)
     double **corr;
-    corr = new double *[256];
-    for (int i = 0; i < 256; i++)
+    corr = new double *[NUMBER_OF_KEY_CANDIDATES];
+    for (int i = 0; i < NUMBER_OF_KEY_CANDIDATES; i++)
     {
         corr[i] = new double[TRACE_ENDPOINT - TRACE_STARTPOINT];
     }
+#endif
 
     // Loop through all key bytes
     for (int key_byte = 0; key_byte < BYTES_PER_KEY; key_byte++)
@@ -786,7 +912,7 @@ int main()
         double cc = -1.0;
 
         // ################# HW PARALLEL ######################
-#ifdef HW_PL
+#ifdef PARALLEL2
         // Start measuring time
         const clock_t begin_time_hw_pl = clock();
 
@@ -817,7 +943,13 @@ int main()
         }
 
         // Stop measuring time
-        std::cout << " HW parallel:  " << float( clock () - begin_time_hw_pl ) /  CLOCKS_PER_SEC << "sec" << endl;
+       /* std::cout << " HW parallel:  " << float( clock () - begin_time_hw_pl ) /  CLOCKS_PER_SEC << "sec" << endl;*/
+
+        // Calculate Correlation Coefficient in parallel
+        double *corr_unrolled = new double [NUMBER_OF_KEY_CANDIDATES *  (TRACE_ENDPOINT - TRACE_STARTPOINT)];
+        cudaError_t cudaStatus = computeCoeffWithCuda_Unrolled(corr_unrolled, traces, hw_pl);
+
+        delete[] hw_pl;
 #endif
 
 
@@ -829,10 +961,10 @@ int main()
         // Loop through all key candidates
         for (int key_candidate = 0; key_candidate < NUMBER_OF_KEY_CANDIDATES; key_candidate++)
         {   
-
+#if !defined PARALLEL2
             // Start measuring time
             const clock_t begin_time_hw2 = clock();
-#ifdef HW_SL
+
             // Measure hamming weight for every trace
             for (int trace = 0; trace < NUMBER_OF_TRACES; trace++)
             {
@@ -850,13 +982,12 @@ int main()
             //std::cout << "HW seriell:       " << float( clock () - begin_time_hw2 ) /  CLOCKS_PER_SEC << "sec" << endl;
 
 
-            // Calculate Correlation Coefficient 
-#ifdef GPU
-#ifdef HW_SL
+            // Calculate Correlation Coefficient
+#ifdef PARALLEL1
             cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw_sl);
-#else ifdef HW_PL
-            cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw_pl);
-#endif
+
+            /*cudaError_t cudaStatus = computeCoeffWithCuda(corr[key_candidate], traces, hw_pl);*/
+
             if (cudaStatus != cudaSuccess) {
                 fprintf(stderr, "computeCoeffWithCuda failed!");
                 return 1;
@@ -864,7 +995,7 @@ int main()
 #endif
             for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
             {
-#ifdef CPU
+#ifdef SERIAL
                 // Create "Slice" of Traces at certain point
                 int *traces_at_trace_point;
                 traces_at_trace_point = new int [NUMBER_OF_TRACES];
@@ -875,16 +1006,18 @@ int main()
                 }
 
                 // Correlation Coefficient 
-#ifdef HW_SL
                 cc = get_Corr_Coef(traces_at_trace_point, hw_sl, NUMBER_OF_TRACES);
-#else ifdef HW_PL
-                cc = get_Corr_Coef(traces_at_trace_point, hw_pl, NUMBER_OF_TRACES);
-#endif
+
+                /*cc = get_Corr_Coef(traces_at_trace_point, hw_pl, NUMBER_OF_TRACES);*/
 
                 delete[] traces_at_trace_point;
 #endif
-#ifdef GPU
+#ifdef PARALLEL1
                 cc = corr[key_candidate][trace_point-TRACE_STARTPOINT];
+#endif
+
+#ifdef PARALLEL2
+                cc = corr_unrolled[key_candidate * (TRACE_ENDPOINT - TRACE_STARTPOINT) + trace_point];
 #endif
                 if(cc > highest_cc)
                 {
@@ -897,9 +1030,6 @@ int main()
         }
         highest_cc = -1.0;
 
-#ifdef HW_PL
-        delete[] hw_pl;
-#endif HW_PL
         // Stop measuring time
         /*std::cout << " HW seriell:   " << float( clock () - begin_time_hw_sl ) /  CLOCKS_PER_SEC << "sec" << endl;*/
     } 
@@ -933,11 +1063,13 @@ int main()
     delete[] hw_sl;
 #endif
 
+#ifdef PARALLEL1
     for (int i = 0; i < 256; i++)
     {
         delete[] corr[i];
     }
     delete[] corr;
+#endif
 
     /* cudaFree(dev_traces);*/
 
