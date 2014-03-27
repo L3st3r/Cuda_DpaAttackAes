@@ -315,7 +315,7 @@ __global__ void CorrCoefKernel_Naiv(double *result, int *x, int *y, int first_co
 /*
 *	Unrolled kernel for computation of the Pearson Correlation Coefficient
 */
-__global__ void CorrCoefKernel_Unrolled(double *result, int *x, int *y)
+__global__ void CorrCoefKernel_Unrolled(float *result, int *x, int *y)
 { 
     int trace_point = blockIdx.x;   //gridDim.x = (TRACE_ENDPOINT-TRACE_STARTPOINT)
     int key_candidate = threadIdx.x; //blockDim.x = NUMBER_OF_KEY_CANDIDATES
@@ -323,30 +323,30 @@ __global__ void CorrCoefKernel_Unrolled(double *result, int *x, int *y)
     _Uint32t sum_x  = 0;
     _Uint32t sum_y  = 0;
 
-    int Ys[NUMBER_OF_TRACES];
+    int Yl[NUMBER_OF_TRACES];
 
     for(int j = 0; j < NUMBER_OF_TRACES; j++)
     {
-        Ys[j] = y[key_candidate*NUMBER_OF_TRACES + j];
+        Yl[j] = y[key_candidate*NUMBER_OF_TRACES + j];
         sum_x  += x[trace_point*NUMBER_OF_TRACES+j];
-        sum_y  += Ys[j];
+        sum_y  += Yl[j];
     }
 
-    double x_average = sum_x/NUMBER_OF_TRACES;
-    double y_average = sum_y/NUMBER_OF_TRACES;
+    float x_average = sum_x/NUMBER_OF_TRACES;
+    float y_average = sum_y/NUMBER_OF_TRACES;
 
-    double dividend = 0;
-    double divisor1 = 0;      
-    double divisor2 = 0;
+    float dividend = 0;
+    float divisor1 = 0;      
+    float divisor2 = 0;
 
     for(int j = 0; j < NUMBER_OF_TRACES; j++)
     {
-        dividend += (x[trace_point*NUMBER_OF_TRACES+j] - x_average)*(Ys[j] - y_average); 
+        dividend += (x[trace_point*NUMBER_OF_TRACES+j] - x_average)*(Yl[j] - y_average); 
         divisor1 += (x[trace_point*NUMBER_OF_TRACES+j] - x_average)*(x[trace_point*NUMBER_OF_TRACES+j] - x_average);  
-        divisor2 += (Ys[j] - y_average)*(Ys[j] - y_average); 
+        divisor2 += (Yl[j] - y_average)*(Yl[j] - y_average); 
     }
 
-    double divisor = sqrt(divisor1)*sqrt(divisor2);
+    float divisor = sqrt(divisor1)*sqrt(divisor2);
 
     if ((dividend == 0) || (divisor == 0))
     {
@@ -545,10 +545,10 @@ Error:
 
 // Helper function for computation of the correlation coefficient using CUDA.
 //cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces_at_trace_point, int *hw)
+cudaError_t computeCoeffWithCuda_Unrolled(float *cc, int *traces_at_trace_point, int *hw)
 {
     int *dev_hw = 0;
-    double *dev_cc = 0;
+    float *dev_cc = 0;
     int *dev_traces_at_tp = 0;
     cudaError_t cudaStatus;
 
@@ -560,7 +560,7 @@ cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces_at_trace_point
     }
 
     // Allocate GPU buffers for three vectors (two input, one output)    .
-    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(double));
+    cudaStatus = cudaMalloc((void**)&dev_cc, NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(float));
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMalloc failed!");
         goto Error;
@@ -610,7 +610,7 @@ cudaError_t computeCoeffWithCuda_Unrolled(double *cc, int *traces_at_trace_point
     }
 
     // Copy output vector from GPU buffer to host memory.
-    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaStatus = cudaMemcpy(cc, dev_cc, NUMBER_OF_KEY_CANDIDATES * (TRACE_ENDPOINT - TRACE_STARTPOINT) * sizeof(float), cudaMemcpyDeviceToHost);
     if (cudaStatus != cudaSuccess) {
         fprintf(stderr, "cudaMemcpy failed!");
         goto Error;
@@ -649,10 +649,16 @@ int main()
     read_traces(traces, TRACE_FILE);
 
 #ifdef PARALLEL2
+#ifdef TIME
+    const clock_t begin_traces_copy = clock();
+#endif
     int *traces_at_trace_point = new int [NUMBER_OF_TRACES*(TRACE_ENDPOINT-TRACE_STARTPOINT)];
     for (int trace_point = TRACE_STARTPOINT; trace_point < TRACE_ENDPOINT; trace_point++)
         for (int j=0; j<NUMBER_OF_TRACES; j++)
             traces_at_trace_point[(trace_point-TRACE_STARTPOINT)*NUMBER_OF_TRACES+j] = traces[trace_point+j*POINTS_PER_TRACE];
+#ifdef TIME
+    t_cc_parallel2 += float( clock() - begin_traces_copy ) / CLOCKS_PER_SEC;
+#endif
 #endif
 #ifdef TIME
     // Stop measuring time
@@ -707,8 +713,8 @@ int main()
     {
         std::cout << "Compute key byte " << key_byte << " ..." << endl;
 
-        double highest_cc = -1.0;
-        double cc = -1.0;
+        float highest_cc = -1.0;
+        float cc = -1.0;
 
         // ################# HW PARALLEL ######################
 #ifdef PARALLEL2
@@ -741,7 +747,7 @@ int main()
         const clock_t begin_time_coeff_parallel2 = clock();
 #endif
         // Calculate Correlation Coefficient in parallel
-        double *corr_unrolled = new double [NUMBER_OF_KEY_CANDIDATES *  (TRACE_ENDPOINT - TRACE_STARTPOINT)];
+        float *corr_unrolled = new float [NUMBER_OF_KEY_CANDIDATES *  (TRACE_ENDPOINT - TRACE_STARTPOINT)];
         cudaError_t cudaStatus = computeCoeffWithCuda_Unrolled(corr_unrolled, traces_at_trace_point, hw_pl);
         if (cudaStatusHw != cudaSuccess) {
             fprintf(stderr, "computeCoeffWithCuda_Unrolled failed!");
